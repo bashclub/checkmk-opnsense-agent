@@ -167,7 +167,10 @@ class checkmk_checker(object):
             _ret = filter(lambda x: x.get("common_name") == cn and x.get("caref") == caref,self._certificate_store.values())
         else:
             _ret = filter(lambda x: x.get("common_name") == cn,self._certificate_store.values())
-        return next(_ret) if _ret else {}
+        try:
+            return next(_ret)
+        except StopIteration:
+            return {}
 
     def get_opnsense_interfaces(self):
         _ifs = {}
