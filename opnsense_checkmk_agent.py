@@ -265,12 +265,19 @@ class checkmk_checker(object):
         _cfr = self._config_reader().get("openvpn")
         if type(_cfr) != dict:
             return _ret
-        try:
-            _monitored_clients = dict(map(lambda x: (x.get("common_name").upper(),dict(x,current=[])),_cfr.get("openvpn-csc")))
-        except:
-            _monitored_clients = {}
+
+        _cso = _cfr.get("openvpn-csc")
+        _monitored_clients = {}
+        if type(_cso) == dict:
+            _cso = [_cso]
+        if type(_cso) == list:
+            _monitored_clients = dict(map(lambda x: (x.get("common_name").upper(),dict(x,current=[])),_cso))
+            
         _now = time.time()
-        for _server in _cfr.get("openvpn-server",[]):
+        _vpnserver = _cfr.get("openvpn-server",[])
+        if type(_vpnserver) == dict:
+            _vpnserver = [_vpnserver]
+        for _server in _vpnserver:
             _server["name"] = _server.get("description") if _server.get("description") else "OpenVPN_{protocoll}_{local_port}".format(**_server)
             _caref = _server.get("caref")
             if not _server.get("maxclients"):
