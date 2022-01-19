@@ -263,7 +263,12 @@ class checkmk_checker(object):
     def check_openvpn(self):
         _ret = [""]
         _cfr = self._config_reader().get("openvpn")
-        _monitored_clients = dict(map(lambda x: (x.get("common_name").upper(),dict(x,current=[])),_cfr.get("openvpn-csc")))
+        if type(_cfr) != dict:
+            return _ret
+        try:
+            _monitored_clients = dict(map(lambda x: (x.get("common_name").upper(),dict(x,current=[])),_cfr.get("openvpn-csc")))
+        except:
+            _monitored_clients = {}
         _now = time.time()
         for _server in _cfr.get("openvpn-server",[]):
             _server["name"] = _server.get("description") if _server.get("description") else "OpenVPN_{protocoll}_{local_port}".format(**_server)
