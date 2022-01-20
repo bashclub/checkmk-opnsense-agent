@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.62"
+__VERSION__ = "0.63"
 
 import sys
 import os
@@ -186,6 +186,15 @@ class checkmk_checker(object):
         except StopIteration:
             return {}
 
+    def get_opnsense_ipaddr(self):
+        try:
+            _ret = {}
+            for _if,_ip,_mask in re.findall("^([\w_]+):\sflags=(?:8943|8051|8043).*?inet\s([\d.]+)\snetmask\s0x([a-f0-9]+)",subprocess.check_output("ifconfig",encoding="utf-8"),re.DOTALL | re.M):
+                _ret[_if] = "{0}/{1}".format(_ip,str(bin(int(_mask,16))).count("1"))
+            return _ret
+        except:
+            return {}
+
     def get_opnsense_interfaces(self):
         _ifs = {}
         #pprint(self._config_reader().get("interfaces"))
@@ -325,8 +334,49 @@ class checkmk_checker(object):
             self._set_storedata("openvpn",interface,(_slot,totalbytesin,totalbytesout))
         return _traffic_in,_traffic_out
 
+    @staticmethod
+    def _get_dpinger_gateway(gateway):
+        _path = "/var/run/dpinger_{0}.sock".format(gateway)
+        if os.path.exists(_path):
+            _sock = socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+            try:
+                _sock.connect(_path)
+                _data = _sock.recv(1024).decode("utf-8").strip()
+                _name, _rtt, _rttsd, _loss = re.findall("(\w+)\s(\d+)\s(\d+)\s(\d+)$",_data)[0]
+                assert _name.strip() == gateway
+                return int(_rtt)/1000.0,int(_rttsd)/1000.0, int(_loss)
+            except:
+                raise
+        return -1,-1,-1
+
+    def checklocal_gateway(self):
+        _ret = []
+        _gateway_items = self._config_reader().get("gateways").get("gateway_item",[])
+        _interfaces = self._config_reader().get("interfaces",{})
+        _ipaddresses = self.get_opnsense_ipaddr()
+        for _gateway in _gateway_items:
+            if type(_gateway.get("descr")) != str:
+                _gateway["descr"] = _gateway.get("name")
+            if _gateway.get("monitor_disable") == "1" or _gateway.get("disabled") == "1":
+                continue
+            _interface = _interfaces.get(_gateway.get("interface"),{})
+            _gateway["realinterface"] = _interface.get("if")
+            if _gateway.get("ipprotocol") == "inet":
+                _gateway["ipaddr"] = _ipaddresses.get(_interface.get("if"))
+            else:
+                _gateway["ipaddr"] = ""
+            _gateway["rtt"], _gateway["rttsd"], _gateway["loss"] = self._get_dpinger_gateway(_gateway.get("name"))
+            _gateway["status"] = 0
+            if _gateway.get("loss") > 0 or _gateway.get("rtt") > 100:
+                _gateway["status"] = 1
+            if _gateway.get("loss") > 90 or _gateway.get("loss") == -1:
+                _gateway["status"] = 2
+
+            _ret.append("{status} \"Gateway {descr}\" rtt={rtt}|rttsd={rttsd}|loss={loss} Gateway on Interface: {realinterface} {ipaddr}".format(**_gateway))
+        return _ret
+
     def checklocal_openvpn(self):
-        _ret = [""]
+        _ret = []
         _cfr = self._config_reader().get("openvpn")
         if type(_cfr) != dict:
             return _ret
@@ -352,13 +402,14 @@ class checkmk_checker(object):
                 _server["maxclients"] = _max_clients
 
             _server_cert = self._get_certificate(_server.get("certref"))
-            _server["bytesin"], _server["bytesout"] = 0,0
+            
             _server["expiredays"] = 0
             _server["expiredate"] = "no certificate found"
             if _server_cert:
                 _notvalidafter = _server_cert.get("not_valid_after")
                 _server["expiredays"] = int((_notvalidafter - _now) / 86400)
                 _server["expiredate"] = time.strftime("Cert Expire: %d.%m.%Y",time.localtime(_notvalidafter))
+
             try:
                 _unix = "/var/etc/openvpn/server{vpnid}.sock".format(**_server)
                 try:
@@ -368,7 +419,7 @@ class checkmk_checker(object):
                         *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))))
                     )
                 except:
-                    pass
+                    _server["bytesin"], _server["bytesout"] = 0,0
                 
                 _number_of_clients = 0
                 _now = int(time.time())
