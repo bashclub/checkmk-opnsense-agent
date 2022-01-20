@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.61"
+__VERSION__ = "0.62"
 
 import sys
 import os
@@ -83,6 +83,7 @@ class checkmk_checker(object):
     _certificate_timestamp = 0
     def do_checks(self):
         self._getosinfo()
+        _errors = []
         _lines = ["<<<check_mk>>>"]
         _lines.append("AgentOS: {os}".format(**self._info))
         _lines.append(f"Version: {__VERSION__}")
@@ -91,16 +92,18 @@ class checkmk_checker(object):
             if _check.startswith("check_"):
                 try:
                     _lines += getattr(self,_check)()
-                except:
-                    pass
+                except Expetion as e:
+                    _errors.append(str(e))
         _lines.append("<<<local:sep(0)>>>")
         for _check in dir(self):
             if _check.startswith("checklocal_"):
                 try:
                     _lines += getattr(self,_check)()
-                except:
-                    pass
+                except Exeption as e:
+                    _errors.append(str(e))
         _lines.append("")
+        sys.stderr.write("\n".join(_errors))
+        sys.stderr.flush()
         return "\n".join(_lines)
 
     def _getosinfo(self):
@@ -188,13 +191,13 @@ class checkmk_checker(object):
             _ifs.update(
                 dict(
                     map(
-                        lambda x: ("wg{}".format(x.get("instance")),x.get("name")),
+                        lambda x: ("wg{}".format(x.get("instance")),"Wireguard_{}".format(x.get("name").strip().replace(" ","_"))),
                         _wgserver
                     )
                 )
             )
         except:
-            raise
+            pass
         return _ifs
 
     def checklocal_firmware(self):
@@ -313,7 +316,7 @@ class checkmk_checker(object):
         if type(_vpnserver) == dict:
             _vpnserver = [_vpnserver]
         for _server in _vpnserver:
-            _server["name"] = _server.get("description") if _server.get("description") else "OpenVPN_{protocoll}_{local_port}".format(**_server)
+            _server["name"] = _server.get("description") if _server.get("description").strip() else "OpenVPN_{protocoll}_{local_port}".format(**_server)
             _caref = _server.get("caref")
             if not _server.get("maxclients"):
                 _max_clients = ipaddress.IPv4Network(_server.get("tunnel_network")).num_addresses -2
@@ -375,6 +378,7 @@ class checkmk_checker(object):
             _current_conn = _client.get("current",[])
             if not _client.get("description"):
                 _client["description"] = _client.get("common_name")
+            _client["description"] = _client["description"].strip(" \r\n")
             _client["expiredays"] = 0
             _client["expiredate"] = "no certificate found"
             _client["status"] = 0
