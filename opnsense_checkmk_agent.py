@@ -121,11 +121,21 @@ class checkmk_checker(object):
     def _getosinfo(self):
         _info = json.load(open("/usr/local/opnsense/version/core","r"))
         _changelog = json.load(open("/usr/local/opnsense/changelog/index.json","r"))
+        try:
+            _latest_firmware = list(filter(lambda x: x.get("series") == _info.get("product_series"),_changelog))[-1]
+            _current_firmware = list(filter(lambda x: x.get("version") == _info.get("product_version"),_changelog))[0]
+            _current_firmware["age"] = int(time.time() - time.mktime(time.strptime(_current_firmware.get("date"),"%B %d, %Y")))
+        except:
+            raise
+            _lastest_firmware = {}
+            _current_firmware = {}
         self._info = {
             "os"                : _info.get("product_name"),
             "os_version"        : _info.get("product_version"),
+            "version_age"      : _current_firmware.get("age",0),
             "product_series"    : _info.get("product_series"),
-            "latest_version"    : list(filter(lambda x: x.get("series") == _info.get("product_series"),_changelog))[-1].get("version"),
+            "latest_version"    : _latest_firmware.get("version"),
+            "latest_date"       : _latest_firmware.get("date"),
             "hostname"          : self._run_prog("hostname").strip(" \n")
         }
 
@@ -223,8 +233,8 @@ class checkmk_checker(object):
 
     def checklocal_firmware(self):
         if self._info.get("os_version") != self._info.get("latest_version"):
-            return ["1 Firmware update_available=1 Version {os_version} ({latest_version} available)".format(**self._info)]
-        return ["0 Firmware update_available=0 Version {os_version}".format(**self._info)]
+            return ["1 Firmware update_available=1|age={version_age} Version {os_version} ({latest_version} available {latest_date})".format(**self._info)]
+        return ["0 Firmware update_available=0|age={version_age} Version {os_version}".format(**self._info)]
         
     def check_net(self):
         _opnsense_ifs = self.get_opnsense_interfaces()
@@ -352,6 +362,8 @@ class checkmk_checker(object):
     def checklocal_gateway(self):
         _ret = []
         _gateway_items = self._config_reader().get("gateways").get("gateway_item",[])
+        if type(_gateway_items) != list:
+            _gateway_items = [_gateway_items]
         _interfaces = self._config_reader().get("interfaces",{})
         _ipaddresses = self.get_opnsense_ipaddr()
         for _gateway in _gateway_items:
