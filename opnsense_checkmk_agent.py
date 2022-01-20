@@ -38,6 +38,7 @@ import pwd
 import threading
 import ipaddress
 import base64
+import traceback
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
 from xml.etree import cElementTree as ELementTree
@@ -81,6 +82,8 @@ class checkmk_handler(StreamRequestHandler):
 
 class checkmk_checker(object):
     _certificate_timestamp = 0
+    _datastore_mutex = threading.RLock()
+    _datastore = object_dict()
     def do_checks(self):
         self._getosinfo()
         _errors = []
@@ -92,19 +95,28 @@ class checkmk_checker(object):
             if _check.startswith("check_"):
                 try:
                     _lines += getattr(self,_check)()
-                except Expetion as e:
-                    _errors.append(str(e))
+                except:
+                    _errors.append(traceback.format_exc())
         _lines.append("<<<local:sep(0)>>>")
         for _check in dir(self):
             if _check.startswith("checklocal_"):
                 try:
                     _lines += getattr(self,_check)()
-                except Exeption as e:
-                    _errors.append(str(e))
+                except:
+                    _errors.append(traceback.format_exc())
         _lines.append("")
         sys.stderr.write("\n".join(_errors))
         sys.stderr.flush()
         return "\n".join(_lines)
+
+    def _get_storedata(self,section,key):
+        with self._datastore_mutex:
+            return self._datastore.get(section,{}).get(key)
+    def _set_storedata(self,section,key,value):
+        with self._datastore_mutex:
+            if section not in self._datastore:
+                self._datastore[section] = object_dict()
+            self._datastore[section][key] = value
 
     def _getosinfo(self):
         _info = json.load(open("/usr/local/opnsense/version/core","r"))
@@ -298,6 +310,21 @@ class checkmk_checker(object):
             _sock = None
         return ""
 
+    def _get_openvpn_traffic(self,interface,totalbytesin,totalbytesout):
+        _hist_data = self._get_storedata("openvpn",interface)
+        _slot = int(time.time())
+        _slot -= _slot%60
+        _hist_slot = 0
+        _traffic_in = _traffic_out = 0
+        if _hist_data:
+            _hist_slot,_hist_bytesin, _hist_bytesout = _hist_data
+            pprint(_hist_data)
+            _traffic_in = int(totalbytesin -_hist_bytesin) / max(1,_slot - _hist_slot)
+            _traffic_out = int(totalbytesout - _hist_bytesout) /  max(1,_slot - _hist_slot)
+        if _hist_slot != _slot:
+            self._set_storedata("openvpn",interface,(_slot,totalbytesin,totalbytesout))
+        return _traffic_in,_traffic_out
+
     def checklocal_openvpn(self):
         _ret = [""]
         _cfr = self._config_reader().get("openvpn")
@@ -325,7 +352,7 @@ class checkmk_checker(object):
                 _server["maxclients"] = _max_clients
 
             _server_cert = self._get_certificate(_server.get("certref"))
-            _nclients, _server["bytesin"], _server["bytesout"] = 0,0,0
+            _server["bytesin"], _server["bytesout"] = 0,0
             _server["expiredays"] = 0
             _server["expiredate"] = "no certificate found"
             if _server_cert:
@@ -335,7 +362,11 @@ class checkmk_checker(object):
             try:
                 _unix = "/var/etc/openvpn/server{vpnid}.sock".format(**_server)
                 try:
-                    _nclients, _server["bytesin"], _server["bytesout"] = re.findall("=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))
+                    
+                    _server["bytesin"], _server["bytesout"] = self._get_openvpn_traffic(
+                        "SRV_{name}".format(**_server),
+                        *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))))
+                    )
                 except:
                     pass
                 
@@ -395,8 +426,12 @@ class checkmk_checker(object):
             if _current_conn:
                 _client["uptime"] = max(map(lambda x: x.get("uptime"),_current_conn))
                 _client["count"] = len(_current_conn)
-                _client["bytes_received"] = sum(map(lambda x: x.get("bytes_received"),_current_conn))
-                _client["bytes_sent"] = sum(map(lambda x: x.get("bytes_sent"),_current_conn))
+                _client["bytes_received"], _client["bytes_sent"] = self._get_openvpn_traffic(
+                    "CL_{description}".format(**_client),
+                    sum(map(lambda x: x.get("bytes_received"),_current_conn)),
+                    sum(map(lambda x: x.get("bytes_sent"),_current_conn))
+                )
+                
                 _client["longdescr"] = ""
                 for _conn in _current_conn:
                     _client["longdescr"] += "Server:{server} {remote_ip}->{vpn_ip} {cipher} ".format(**_conn)
