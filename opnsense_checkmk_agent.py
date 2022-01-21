@@ -123,7 +123,7 @@ class checkmk_checker(object):
         _changelog = json.load(open("/usr/local/opnsense/changelog/index.json","r"))
         try:
             _latest_firmware = list(filter(lambda x: x.get("series") == _info.get("product_series"),_changelog))[-1]
-            _current_firmware = list(filter(lambda x: x.get("version") == _info.get("product_version"),_changelog))[0]
+            _current_firmware = list(filter(lambda x: x.get("version") == _info.get("product_version").split("_")[0],_changelog))[0]
             _current_firmware["age"] = int(time.time() - time.mktime(time.strptime(_current_firmware.get("date"),"%B %d, %Y")))
         except:
             raise
@@ -324,7 +324,8 @@ class checkmk_checker(object):
                     break
             return _data
         finally:
-            _sock.send("quit\n".encode("utf-8"))
+            if _sock:
+                _sock.send("quit\n".encode("utf-8"))
             _sock.close()
             _sock = None
         return ""
@@ -402,6 +403,8 @@ class checkmk_checker(object):
             
         _now = time.time()
         _vpnserver = _cfr.get("openvpn-server",[])
+        if type(_vpnserver) == None:
+            return _ret
         if type(_vpnserver) == dict:
             _vpnserver = [_vpnserver]
         for _server in _vpnserver:
@@ -430,8 +433,10 @@ class checkmk_checker(object):
                         "SRV_{name}".format(**_server),
                         *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))))
                     )
+                    _server["status"] = 0
                 except:
                     _server["bytesin"], _server["bytesout"] = 0,0
+                    raise
                 
                 _number_of_clients = 0
                 _now = int(time.time())
@@ -455,7 +460,7 @@ class checkmk_checker(object):
                     if _client_raw[0].upper() in _monitored_clients:
                         _monitored_clients[_client_raw[0].upper()]["current"].append(_client)
 
-                _server["status"] = 0
+                
                 if _server["expiredays"] < 61:
                     _server["status"] = 2 if _server["expiredays"] < 31 else 1
                 else:
@@ -464,7 +469,6 @@ class checkmk_checker(object):
                 _server["clientcount"] = _number_of_clients
                 _ret.append('{status} "OpenVPN Server: {name}" connections_ssl_vpn={clientcount};;{maxclients}|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {clientcount}/{maxclients} Connections Port:{local_port}/{protocol} {expiredate}'.format(**_server))
             except:
-                raise
                 _server["status"] = 2
                 _ret.append('2 "OpenVPN Server: {name}" connections_ssl_vpn=0;;{maxclients}|expiredays={expiredays} Server down Port:{local_port}/{protocol} {expiredate}'.format(**_server))
 
