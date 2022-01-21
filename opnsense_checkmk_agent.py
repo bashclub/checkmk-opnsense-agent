@@ -363,7 +363,7 @@ class checkmk_checker(object):
         _ret = []
         _gateway_items = self._config_reader().get("gateways").get("gateway_item",[])
         if type(_gateway_items) != list:
-            _gateway_items = [_gateway_items]
+            _gateway_items = [_gateway_items] if _gateway_items else []
         _interfaces = self._config_reader().get("interfaces",{})
         _ipaddresses = self.get_opnsense_ipaddr()
         for _gateway in _gateway_items:
