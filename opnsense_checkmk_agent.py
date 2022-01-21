@@ -320,7 +320,7 @@ class checkmk_checker(object):
             while True:
                 _socket_data = _sock.recv(4096).decode("utf-8")
                 _data += _socket_data
-                if _socket_data.strip().endswith("END") or _socket_data.strip().startswith("SUCCESS:"):
+                if _data.strip().endswith("END") or _data.strip().startswith("SUCCESS:") or _data.strip().startswith("ERROR:"):
                     break
             return _data
         finally:
@@ -434,8 +434,23 @@ class checkmk_checker(object):
                         "SRV_{name}".format(**_server),
                         *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))))
                     )
-                    _server["status"] = 0 if _server["status"] == 3 else _server["status"]
-                    _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=1;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} Connection Port:/{protocol} {expiredate}'.format(**_server))
+                    _laststate = self._read_from_openvpnsocket(_unix,"state 1").strip().split("\r\n")[-2]
+                    _timestamp, _server["connstate"], _data = _laststate.split(",",2)
+                    if _server["connstate"] == "CONNECTED":
+                        _data = _data.split(",")
+                        _server["vpn_ipaddr"] = _data[1]
+                        _server["remote_ipaddr"] = _data[2]
+                        _server["remote_port"] = _data[3]
+                        _server["source_addr"] = _data[4]
+                        _server["status"] = 0 if _server["status"] == 3 else _server["status"]
+                        _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=1;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} Connected {remote_ipaddr}:{remote_port} {vpn_ipaddr} {expiredate}\Source IP: {source_addr}'.format(**_server))
+                    else:
+                        if _server["type"] == "client":
+                            _server["status"] = 2
+                            _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {connstate} {expiredate}'.format(**_server))
+                        else:
+                            _server["status"] = 1 if _server["status"] != 2 else 2
+                            _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} waiting on Port {local_port}/{protocol} {expiredate}'.format(**_server))
                 except:
                     _ret.append('2 "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:/{protocol} {expiredate}'.format(**_server))
                     raise
