@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.64"
+__VERSION__ = "0.67"
 
 import sys
 import os
@@ -121,6 +121,7 @@ class checkmk_checker(object):
     def _getosinfo(self):
         _info = json.load(open("/usr/local/opnsense/version/core","r"))
         _changelog = json.load(open("/usr/local/opnsense/changelog/index.json","r"))
+        _config_modified = os.stat("/conf/config.xml").st_mtime
         try:
             _latest_firmware = list(filter(lambda x: x.get("series") == _info.get("product_series"),_changelog))[-1]
             _current_firmware = list(filter(lambda x: x.get("version") == _info.get("product_version").split("_")[0],_changelog))[0]
@@ -132,7 +133,9 @@ class checkmk_checker(object):
         self._info = {
             "os"                : _info.get("product_name"),
             "os_version"        : _info.get("product_version"),
-            "version_age"      : _current_firmware.get("age",0),
+            "version_age"       : _current_firmware.get("age",0),
+            "config_age"        : int(time.time() - _config_modified) ,
+            "last_configchange" : time.strftime("%H:%M %d.%m.%Y",time.localtime(_config_modified)),
             "product_series"    : _info.get("product_series"),
             "latest_version"    : _latest_firmware.get("version"),
             "latest_date"       : _latest_firmware.get("date"),
@@ -233,8 +236,9 @@ class checkmk_checker(object):
 
     def checklocal_firmware(self):
         if self._info.get("os_version") != self._info.get("latest_version"):
-            return ["1 Firmware update_available=1|age={version_age} Version {os_version} ({latest_version} available {latest_date})".format(**self._info)]
-        return ["0 Firmware update_available=0|age={version_age} Version {os_version}".format(**self._info)]
+            return ["1 Firmware update_available=1|last_updated={version_age}|apply_finish_time={config_age} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**self._info)]
+        return ["0 Firmware update_available=0|last_updated={version_age}|apply_finish_time={config_age} Version {os_version}  Config changed: {last_configchange}".format(**self._info)]
+        
         
     def check_net(self):
         _opnsense_ifs = self.get_opnsense_interfaces()
@@ -533,6 +537,113 @@ class checkmk_checker(object):
                 _ret.append('{status} "OpenVPN Client: {description}" connectiontime={uptime}|connections_ssl_vpn={count}|if_in_octets={bytes_received}|if_out_octets={bytes_sent}|expiredays={expiredays} {longdescr} {expiredate}'.format(**_client))
             else:
                 _ret.append('2 "OpenVPN Client: {description}" connectiontime=0|connections_ssl_vpn=0|if_in_octets=0|if_out_octets=0|expiredays={expiredays} Nicht verbunden {expiredate}'.format(**_client))
+        return _ret
+
+    def checklocal_ipsec(self):
+        _ret = []
+        for _con in json.loads(subprocess.check_output("/usr/local/opnsense/scripts/ipsec/list_status.py",encoding="utf-8")).values():
+            _childsas = None
+            _con["status"] = 2
+            _con["bytes_received"] = 0
+            _con["bytes_sent"] = 0
+            for _sas in _con.get("sas",[]):
+                _con["state"] = _sas.get("state","unknown")
+                _childsas = filter(lambda x: x.get("state") == "INSTALLED",_sas.get("child-sas").values())
+                if _childsas:
+                    _childsas = next(_childsas)
+                    _con["remote-host"] = _sas.get("remote-host")
+                    _connecttime = int(_childsas.get("install-time",0))
+                    _con["bytes_received"] = int(int(_childsas.get("bytes-in",0)) /_connecttime)
+                    _con["bytes_sent"] = int(int(_childsas.get("bytes-out",0)) / _connecttime)
+                    _con["status"] = 0
+                    break
+            if _childsas:
+                _ret.append("{status} \"IPsec Tunnel: {remote-id}\" if_in_octets={bytes_received}|if_out_octets={bytes_sent} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
+        return _ret
+
+    def checklocal_unbound(self):
+        _ret = []
+        try:
+            _output = subprocess.check_output(["/usr/local/sbin/unbound-control", "-c", "/var/unbound/unbound.conf", "stats_noreset"],encoding="utf-8",stderr=subprocess.DEVNULL)
+            _unbound_stat = dict(
+                map(
+                    lambda x: (x[0].replace(".","_"),float(x[1])),
+                        re.findall("total\.([\w.]+)=([\d.]+)",_output)
+                )
+            )
+            _ret.append("0 \"Unbound DNS\" dns_successes={num_queries}|dns_recursion={num_recursivereplies}|dns_cachehits={num_cachehits}|dns_cachemiss={num_cachemiss}|avg_response_time={recursion_time_avg} Unbound running".format(**_unbound_stat))
+        except:
+            _ret.append("2 \"Unbound DNS\" dns_successes=0|dns_recursion=0|dns_cachehits=0|dns_cachemiss=0|avg_response_time=0 Unbound not running")
+        return _ret
+
+
+
+    def checklocal_acmeclient(self):
+        _ret = []
+        _now = time.time()
+        try:
+            _acmecerts = self._config_reader().get("OPNsense").get("AcmeClient").get("certificates").get("certificate")
+        except:
+            _acmecerts = []
+        for _cert_info in _acmecerts:
+            if _cert_info.get("enabled") != "1":
+                continue
+            _certificate = self._get_certificate(_cert_info.get("certRefId"))
+            if type(_certificate) != dict:
+                _certificate = {}
+            _expiredays = _certificate.get("not_valid_after",_now) - _now
+            _certificate_age = _now - int(_certificate.get("not_valid_before",_cert_info.get("lastUpdate",_now)))
+            _cert_info["age"] = int(_certificate_age)
+            _cert_info["status"] = 0
+            if _cert_info.get("statusCode") == "200":
+                if _certificate_age < int(_cert_info.get("renewInterval",0)):
+                    _cert_info["status"] = 1
+            else:
+                _cert_info["status"] = 1
+            if _expiredays < 10:
+                _cert_info["status"] = 2
+            if not _cert_info.get("description"):
+                _cert_info["description"] = _cert_info.get("name",_certificate.get("common_name"))
+            _cert_info["issuer"] = _certificate.get("issuer")
+            _cert_info["lastupdatedate"] = time.strftime("%d.%m.%Y",time.localtime(int(_cert_info.get("lastUpdate",0))))
+            _cert_info["expiredate"] = time.strftime("%d.%m.%Y",time.localtime(_certificate.get("not_valid_after",0)))
+            _ret.append("{status} \"ACME Cert: {description}\" age={age} Last Update: {lastupdatedate} Status: {statusCode} Cert expire: {expiredate}".format(**_cert_info))
+
+        return _ret
+
+    def check_haproxy(self):
+        _ret = ["<<<haproxy:sep(44)>>>"]
+        _path = "/var/run/haproxy.socket"
+        try:
+            _haproxy_servers = dict(map(lambda x: (x.get("@uuid"),x),self._config_reader().get("OPNsense").get("HAProxy").get("servers").get("server")))
+            _healthcheck_servers = []
+            for _backend in self._config_reader().get("OPNsense").get("HAProxy").get("backends").get("backend"):
+                if _backend.get("healthCheckEnabled") == "1" and _backend.get("healthCheck") != None:
+                    for _server_id in _backend.get("linkedServers","").split(","):
+                        _server = _haproxy_servers.get(_server_id)
+                        _healthcheck_servers.append("{0},{1}".format(_backend.get("name",""),_server.get("name","")))
+        except:
+            return []
+        if os.path.exists(_path):
+            _sock = socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
+            _sock.connect(_path)
+            _sock.send("show stat\n".encode("utf-8"))
+            _data = ""
+            while True:
+                _sockdata = _sock.recv(4096)
+                if not _sockdata:
+                    break
+                _data += _sockdata.decode("utf-8")
+            
+            for _line in _data.split("\n"):
+                _linedata = _line.split(",")
+                if len(_linedata) < 33:
+                    continue
+                #pprint(list(enumerate(_linedata)))
+                if _linedata[32] == "2":
+                    if "{0},{1}".format(*_linedata) not in _healthcheck_servers:
+                        continue ## ignore backends check disabled
+                _ret.append(_line)
         return _ret
 
     def check_df(self):
