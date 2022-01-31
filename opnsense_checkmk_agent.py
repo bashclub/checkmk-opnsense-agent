@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.67"
+__VERSION__ = "0.69"
 
 import sys
 import os
@@ -84,7 +84,7 @@ class checkmk_checker(object):
     _certificate_timestamp = 0
     _datastore_mutex = threading.RLock()
     _datastore = object_dict()
-    def do_checks(self):
+    def do_checks(self,debug=False):
         self._getosinfo()
         _errors = []
         _lines = ["<<<check_mk>>>"]
@@ -105,8 +105,9 @@ class checkmk_checker(object):
                 except:
                     _errors.append(traceback.format_exc())
         _lines.append("")
-        sys.stderr.write("\n".join(_errors))
-        sys.stderr.flush()
+        if debug:
+            sys.stderr.write("\n".join(_errors))
+            sys.stderr.flush()
         return "\n".join(_lines)
 
     def _get_storedata(self,section,key):
@@ -334,8 +335,8 @@ class checkmk_checker(object):
             _sock = None
         return ""
 
-    def _get_openvpn_traffic(self,interface,totalbytesin,totalbytesout):
-        _hist_data = self._get_storedata("openvpn",interface)
+    def _get_traffic(self,modul,interface,totalbytesin,totalbytesout):
+        _hist_data = self._get_storedata(modul,interface)
         _slot = int(time.time())
         _slot -= _slot%60
         _hist_slot = 0
@@ -345,7 +346,7 @@ class checkmk_checker(object):
             _traffic_in = int(totalbytesin -_hist_bytesin) / max(1,_slot - _hist_slot)
             _traffic_out = int(totalbytesout - _hist_bytesout) /  max(1,_slot - _hist_slot)
         if _hist_slot != _slot:
-            self._set_storedata("openvpn",interface,(_slot,totalbytesin,totalbytesout))
+            self._set_storedata(modul,interface,(_slot,totalbytesin,totalbytesout))
         return _traffic_in,_traffic_out
 
     @staticmethod
@@ -434,7 +435,7 @@ class checkmk_checker(object):
                 _unix = "/var/etc/openvpn/{type}{vpnid}.sock".format(**_server)
                 try:
                     
-                    _server["bytesin"], _server["bytesout"] = self._get_openvpn_traffic(
+                    _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
                         "SRV_{name}".format(**_server),
                         *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))))
                     )
@@ -468,7 +469,7 @@ class checkmk_checker(object):
                     _unix = "/var/etc/openvpn/{type}{vpnid}.sock".format(**_server)
                     try:
                         
-                        _server["bytesin"], _server["bytesout"] = self._get_openvpn_traffic(
+                        _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
                             "SRV_{name}".format(**_server),
                             *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))))
                         )
@@ -525,7 +526,7 @@ class checkmk_checker(object):
             if _current_conn:
                 _client["uptime"] = max(map(lambda x: x.get("uptime"),_current_conn))
                 _client["count"] = len(_current_conn)
-                _client["bytes_received"], _client["bytes_sent"] = self._get_openvpn_traffic(
+                _client["bytes_received"], _client["bytes_sent"] = self._get_traffic("openvpn",
                     "CL_{description}".format(**_client),
                     sum(map(lambda x: x.get("bytes_received"),_current_conn)),
                     sum(map(lambda x: x.get("bytes_sent"),_current_conn))
@@ -541,7 +542,10 @@ class checkmk_checker(object):
 
     def checklocal_ipsec(self):
         _ret = []
-        for _con in json.loads(subprocess.check_output("/usr/local/opnsense/scripts/ipsec/list_status.py",encoding="utf-8")).values():
+        _json_data = subprocess.check_output("/usr/local/opnsense/scripts/ipsec/list_status.py",encoding="utf-8")
+        if len(_json_data) < 10:
+            return []
+        for _con in json.loads(_json_data).values():
             _childsas = None
             _con["status"] = 2
             _con["bytes_received"] = 0
@@ -549,7 +553,7 @@ class checkmk_checker(object):
             for _sas in _con.get("sas",[]):
                 _con["state"] = _sas.get("state","unknown")
                 _childsas = filter(lambda x: x.get("state") == "INSTALLED",_sas.get("child-sas").values())
-                if _childsas:
+                try:
                     _childsas = next(_childsas)
                     _con["remote-host"] = _sas.get("remote-host")
                     _connecttime = int(_childsas.get("install-time",0))
@@ -557,8 +561,50 @@ class checkmk_checker(object):
                     _con["bytes_sent"] = int(int(_childsas.get("bytes-out",0)) / _connecttime)
                     _con["status"] = 0
                     break
+                except StopIteration:
+                    pass
             if _childsas:
                 _ret.append("{status} \"IPsec Tunnel: {remote-id}\" if_in_octets={bytes_received}|if_out_octets={bytes_sent} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
+        return _ret
+
+    def checklocal_wireguard(self):
+        _ret = []
+        try:
+            _clients = self._config_reader().get("OPNsense").get("wireguard").get("client").get("clients").get("client")
+            if type(_clients) != list:
+                _clients = [_clients] if _clients else []
+            _clients = dict(map(lambda x: (x.get("pubkey"),x),_clients))
+        except:
+            return []
+
+        _now = time.time()
+        for _client in _clients.values(): ## fill defaults
+            _client["interface"] = ""
+            _client["endpoint"]  = ""
+            _client["last_handshake"]  = 0
+            _client["bytes_received"]  = 0
+            _client["bytes_sent"] = 0
+            _client["status"] = 2
+
+        _dump = subprocess.check_output(["wg","show","all","dump"],encoding="utf-8").strip()
+        for _line in _dump.split("\n"):
+            _values = _line.split("\t")
+            if len(_values) != 9:
+                continue
+            _client = _clients.get(_values[1].strip())
+            if not _client:
+                continue
+            _client["interface"] = _values[0].strip()
+            _client["endpoint"]  = _values[3].strip().split(":")[0]
+            _client["last_handshake"]  = int(_values[5].strip())
+            _client["bytes_received"], _client["bytes_sent"]  = self._get_traffic("wireguard","",int(_values[6].strip()),int(_values[7].strip()))
+            _client["status"] = 2 if _now - _client["last_handshake"] > 300 else 0  ## 5min timeout
+
+        for _client in _clients.values():
+            if _client.get("status") == 2 and _client.get("endpoint") != "":
+                _client["endpoint"] = "last IP:" + _client["endpoint"]
+            _ret.append('{status} "WireGuard Client: {name}" if_in_octets={bytes_received}|if_out_octets={bytes_sent} {interface}: {endpoint} - {tunneladdress}'.format(**_client))
+
         return _ret
 
     def checklocal_unbound(self):
@@ -583,6 +629,8 @@ class checkmk_checker(object):
         _now = time.time()
         try:
             _acmecerts = self._config_reader().get("OPNsense").get("AcmeClient").get("certificates").get("certificate")
+            if type(_acmecerts) == dict:
+                _acmecerts = [_acmecerts]
         except:
             _acmecerts = []
         for _cert_info in _acmecerts:
@@ -644,6 +692,18 @@ class checkmk_checker(object):
                     if "{0},{1}".format(*_linedata) not in _healthcheck_servers:
                         continue ## ignore backends check disabled
                 _ret.append(_line)
+        return _ret
+
+    def check_smartinfo(self):
+        if not os.path.exists("/usr/local/sbin/smartctl"):
+            return []
+        REGEX_DISCPATH = re.compile("(sd[a-z]+|da[0-9]+|nvme[0-9]+|ada[0-9]+)$")
+        _ret = ["<<<disk_smart_info:sep(124)>>>"]
+        for _dev in filter(lambda x: REGEX_DISCPATH.match(x),os.listdir("/dev/")):
+            try:
+                _ret.append(str(smart_disc(_dev)))
+            except:
+                pass
         return _ret
 
     def check_df(self):
@@ -738,10 +798,10 @@ class checkmk_server(TCPServer,checkmk_checker):
 
     def server_start(self):
         sys.stderr.write("starting checkmk_agent\n")
+        sys.stderr.flush()
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGHUP, self._signal_handler)
-        sys.stderr.flush()
         self._change_user()
         try:
             self.server_bind()
@@ -811,6 +871,99 @@ class checkmk_server(TCPServer,checkmk_checker):
     def __del__(self):
         pass ## todo
 
+
+REGEX_SMART_VENDOR = re.compile(r"^\s*(?P<num>\d+)\s(?P<name>[-\w]+).*\s{2,}(?P<value>[\w\/() ]+)$",re.M)
+REGEX_SMART_DICT = re.compile(r"^(.*?):\s*(.*?)$",re.M)
+class smart_disc(object):
+    def __init__(self,device):
+        self.device = device
+        MAPPING = {
+            "Model Family"      : ("model_family"       ,lambda x: x),
+            "Model Number"      : ("model_family"       ,lambda x: x),
+            "Product"           : ("model_family"       ,lambda x: x),
+            "Vendor"            : ("vendor"             ,lambda x: x),
+            "Revision"          : ("revision"           ,lambda x: x),
+            "Device Model"      : ("model_type"         ,lambda x: x),
+            "Serial Number"     : ("serial_number"      ,lambda x: x),
+            "Serial number"     : ("serial_number"      ,lambda x: x),
+            "Firmware Version"  : ("firmware_version"   ,lambda x: x),
+            "User Capacity"     : ("capacity"           ,lambda x: x.split(" ")[0].replace(",","")),
+            "Total NVM Capacity": ("capacity"           ,lambda x: x.split(" ")[0].replace(",","")),
+            "Rotation Rate"     : ("rpm"                ,lambda x: x.replace(" rpm","")),
+            "Form Factor"       : ("formfactor"         ,lambda x: x),
+            "SATA Version is"   : ("transport"          ,lambda x: x.split(",")[0]),
+            "Transport protocol": ("transport"          ,lambda x: x),
+            "SMART support is"  : ("smart"              ,lambda x: int(x.lower() == "enabled")),
+            "Critical Warning"  : ("critical"           ,lambda x: self._saveint(x,base=16)),
+            "Temperature"       : ("temperature"        ,lambda x: x.split(" ")[0]),
+            "Data Units Read"   : ("data_read_bytes"    ,lambda x: x.split(" ")[0].replace(",","")),
+            "Data Units Written": ("data_write_bytes"   ,lambda x: x.split(" ")[0].replace(",","")),
+            "Power On Hours"    : ("poweronhours"       ,lambda x: x.replace(",","")),
+            "Power Cycles"      : ("powercycles"        ,lambda x: x.replace(",","")),
+            "NVMe Version"      : ("transport"          ,lambda x: f"NVMe {x}"),
+            "Raw_Read_Error_Rate"   : ("error_rate"     ,lambda x: x.replace(",","")),
+            "Reallocated_Sector_Ct" : ("reallocate"     ,lambda x: x.replace(",","")),
+            "Seek_Error_Rate"       : ("seek_error_rate",lambda x: x.replace(",","")),
+            "Power_Cycle_Count"     : ("powercycles"        ,lambda x: x.replace(",","")),
+            "Temperature_Celsius"   : ("temperature"        ,lambda x: x.split(" ")[0]),
+            "UDMA_CRC_Error_Count"  : ("udma_error"         ,lambda x: x.replace(",","")),
+            "Offline_Uncorrectable" : ("uncorrectable"      ,lambda x: x.replace(",","")),
+            "Power_On_Hours"        : ("poweronhours"       ,lambda x: x.replace(",","")),
+            "Spin_Retry_Count"      : ("spinretry"          ,lambda x: x.replace(",","")),
+            "Current_Pending_Sector": ("pendingsector"      ,lambda x: x.replace(",","")),
+            "Current Drive Temperature"         : ("temperature"        ,lambda x: x.split(" ")[0]),
+            "Reallocated_Event_Count"           : ("reallocate_ev"      ,lambda x: x.split(" ")[0]),
+            "Warning  Comp. Temp. Threshold"    : ("temperature_warn"   ,lambda x: x.split(" ")[0]),
+            "Critical Comp. Temp. Threshold"    : ("temperature_crit"   ,lambda x: x.split(" ")[0]),
+            "Media and Data Integrity Errors"   : ("media_errors"       ,lambda x: x),
+            "Airflow_Temperature_Cel"           : ("temperature"        ,lambda x: x),
+            "SMART overall-health self-assessment test result" : ("smart_status" ,lambda x: int(x.lower() == "passed")),
+            "SMART Health Status"   : ("smart_status" ,lambda x: int(x.lower() == "ok")),
+        }
+        self._get_data()
+        for _key, _value in REGEX_SMART_DICT.findall(self._smartctl_output):
+            if _key in MAPPING.keys():
+                _map = MAPPING[_key]
+                setattr(self,_map[0],_map[1](_value))
+
+        for _vendor_num,_vendor_text,_value in REGEX_SMART_VENDOR.findall(self._smartctl_output):
+            if _vendor_text in MAPPING.keys():
+                _map = MAPPING[_vendor_text]
+                setattr(self,_map[0],_map[1](_value))
+
+    def _saveint(self,val,base=10):
+        try:
+            return int(val,base)
+        except (TypeError,ValueError):
+            return 0
+
+    def _get_data(self):
+        try:
+            self._smartctl_output = subprocess.check_output(["smartctl","-a","-n","standby", f"/dev/{self.device}"],encoding=sys.stdout.encoding)
+        except subprocess.CalledProcessError as e:
+            if e.returncode & 0x1:
+                raise
+            _status = ""
+            self._smartctl_output = e.output
+            if e.returncode & 0x2:
+                _status = "SMART Health Status:  CRC Error"
+            if e.returncode & 0x4:
+                _status = "SMART Health Status:  PREFAIL"
+            if e.returncode & 0x3:
+                _status = "SMART Health Status:  DISK FAILING"
+                
+            self._smartctl_output += f"\n{_status}\n"
+
+    def __str__(self):
+        _ret = []
+        if not getattr(self,"model_type",None):
+            self.model_type = getattr(self,"model_family","unknown")
+        for _k,_v in self.__dict__.items():
+            if _k.startswith("_") or _k in ("device"): 
+                continue
+            _ret.append(f"{self.device}|{_k}|{_v}")
+        return "\n".join(_ret)
+
 if __name__ == "__main__":
     import argparse
     _ = lambda x: x
@@ -866,7 +1019,7 @@ if __name__ == "__main__":
         os.kill(int(_pid),signal.SIGTERM)
 
     elif args.debug:
-        print(_server.do_checks())
+        print(_server.do_checks(debug=True))
     elif args.nodaemon:
         _server.server_start()
     else:
