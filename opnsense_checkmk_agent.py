@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.69"
+__VERSION__ = "0.71"
 
 import sys
 import os
@@ -543,7 +543,7 @@ class checkmk_checker(object):
     def checklocal_ipsec(self):
         _ret = []
         _json_data = subprocess.check_output("/usr/local/opnsense/scripts/ipsec/list_status.py",encoding="utf-8")
-        if len(_json_data) < 10:
+        if len(_json_data.strip()) < 20:
             return []
         for _con in json.loads(_json_data).values():
             _childsas = None
@@ -711,13 +711,34 @@ class checkmk_checker(object):
         _ret += self._run_prog("df -kTP -t ufs").split("\n")[1:]
         return _ret
 
+    def check_kernel(self):
+        _ret = ["<<<kernel>>>"]
+        _out = self._run_prog("sysctl -a")
+        _kernel = dict([_v.split(": ") for _v in _out.split("\n") if len(_v.split(": ")) == 2])
+        _ret.append("{0:.0f}".format(time.time()))
+        _ret.append("cpu {0} {1} {2} {4} {3}".format(*(_kernel.get("kern.cp_time","").split(" "))))
+        _ret.append("ctxt {0}".format(_kernel.get("vm.stats.sys.v_swtch")))
+        _sum = sum(map(lambda x: int(x[1]),(filter(lambda x: x[0] in ("vm.stats.vm.v_forks","vm.stats.vm.v_vforks","vm.stats.vm.v_rforks","vm.stats.vm.v_kthreads"),_kernel.items()))))
+        _ret.append("processes {0}".format(_sum))
+        return _ret
+
+    def check_zpool(self):
+        _ret = ["<<<zpool_status>>>"]
+        try:
+            for _line in self._run_prog("zpool status -x").split("\n"):
+                if _line.find("errors: No known data errors") == -1:
+                    _ret.append(_line)
+        except:
+            return []
+        return _ret
+
     def check_zfs(self):
         _ret = ["<<<zfsget>>>"]
         _ret.append(self._run_prog("zfs get -t filesystem,volume -Hp name,quota,used,avail,mountpoint,type"))
         _ret.append("[df]")
         _ret.append(self._run_prog("df -kP -t zfs"))
         _ret.append("<<<zfs_arc_cache>>>")
-        _ret.append(self._run_prog("sysctl -q kstat.zfs.misc.arcstats").replace("kstat.zfs.misc.arcstats.","").strip())
+        _ret.append(self._run_prog("sysctl -q kstat.zfs.misc.arcstats").replace("kstat.zfs.misc.arcstats.","").replace(": "," = ").strip())
         return _ret
 
     def check_mounts(self):
