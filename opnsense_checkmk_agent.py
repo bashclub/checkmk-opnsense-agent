@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.71"
+__VERSION__ = "0.73"
 
 import sys
 import os
@@ -240,50 +240,69 @@ class checkmk_checker(object):
             return ["1 Firmware update_available=1|last_updated={version_age}|apply_finish_time={config_age} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**self._info)]
         return ["0 Firmware update_available=0|last_updated={version_age}|apply_finish_time={config_age} Version {os_version}  Config changed: {last_configchange}".format(**self._info)]
         
-        
+
     def check_net(self):
         _opnsense_ifs = self.get_opnsense_interfaces()
-        _mapdict = {
-            "line rate"                 : ("speed", lambda x: int(int(x.split(" ")[0])/1000/1000)),
-            "input errors"              : ("ierror", lambda x: x),
-            "output errors"             : ("oerror", lambda x: x),
-            "packets received"          : ("ipackets", lambda x: x),
-            "packets transmitted"       : ("opackets", lambda x: x),
-            "bytes received"            : ("rx", lambda x: x),
-            "bytes transmitted"         : ("tx", lambda x: x),
-            "collisions"                : ("collissions", lambda x: x),
-        }
         _now = int(time.time())
         _ret = ["<<<statgrab_net>>>"]
-        #_interface_status = dict(re.findall("^(\w+):.*?(UP|DOWN)",subprocess.check_output("ifconfig",encoding="utf-8"),re.M))
         _interface_status = dict(
             map(lambda x: (x[0],(x[1:])),
-                re.findall("^(?P<iface>\w+):.*?(?P<operstate>UP|DOWN).*?\n(?:\s+(?:media:.*?(?P<speed>\d+).*?\<(?P<duplex>.*?)\>|).*?\n)*",
+                re.findall("^(?P<iface>[\w.]+):.*?(?P<adminstate>UP|DOWN),.*?\n(?:\s+(?:media:.*?(?P<speed>\d+G?).*?\<(?P<duplex>.*?)\>|(?:status:\s(?P<operstate>[ \w]+))|).*?\n)*",
                 subprocess.check_output("ifconfig",encoding="utf-8"),re.M)
             )
         )
-        _interface_data = self._run_prog("/usr/local/sbin/ifinfo")
-        for _interface in re.finditer("^Interface\s(\w+).*?:\n((?:\s+\w+.*?\n)*)",_interface_data,re.M):
-            _iface, _data = _interface.groups()
-            _ifconfig = _interface_status.get(_iface,("","",""))
+        _interface_data = self._run_prog("/usr/bin/netstat -i -b -d -n -W -f link").split("\n")
+        _header = _interface_data[0].lower()
+        _header = _header.replace("pkts","packets").replace("coll","collisions").replace("errs","error").replace("ibytes","rx").replace("obytes","tx")
+        _header = _header.split()
+
+        for _line in _interface_data[1:]:
+            _fields = _line.split()
+            if not _fields: 
+                continue
+            _iface = _fields[0]
+            if _iface.replace("*","") in ("pflog0","lo0"):
+                continue
+            _ifconfig = _interface_status.get(_iface,("","","unknown",""))
             _name = _opnsense_ifs.get(_iface)
             if not _name:
                 continue
-            _ifacedict = {
+            _ifacedict = dict(zip(_header,_fields))
+            _ifacedict.update({
                 "interface_name"    : _name,
-                "duplex"            : _ifconfig[2] if _ifconfig[2] else "unknown",
+                "duplex"            : _ifconfig[2],
+                "speed"             : _ifconfig[1].replace("G","000"),
                 "systime"           : _now,
-                "up"                : str(bool(_ifconfig[0] == "UP")).lower()
-            }
-            for _key,_val in re.findall("^\s+(.*?):\s(.*?)$",_data,re.M):
-                _map = _mapdict.get(_key)
-                if not _map:
-                    continue
-                _ifacedict[_map[0]] = _map[1](_val)
-            
+                "up"                : str(bool(_ifconfig[3] in ("active",""))).lower(),
+                "admin_status"      : str(bool(_ifconfig[0] == "UP")).lower(),
+                "phys_address"      : _ifacedict.get("address")
+            })
             for _key,_val in _ifacedict.items():
+                if _key in ("name","network","address"):
+                    continue
+                if type(_val) == str:
+                    _val = _val.replace(" ","_")
+                if not _val:
+                    continue
                 _ret.append(f"{_iface}.{_key} {_val}")
         return _ret
+
+    def checklocal_services(self):
+        _phpcode = '<?php require_once("config.inc");require_once("system.inc"); require_once("plugins.inc"); require_once("util.inc"); foreach(plugins_services() as $_service) { printf("%s;%s;%s\n",$_service["name"],$_service["description"],service_status($_service));} ?>'
+        _proc = subprocess.Popen(["php"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,encoding="utf-8")
+        _data,_ = _proc.communicate(input=_phpcode)
+        _services = []
+        for _service in _data.strip().split("\n"):
+            _services.append(_service.split(";"))
+        _num_services = len(_services)
+        _stopped_services = list(filter(lambda x: x[2] != '1',_services))
+        _num_stopped = len(_stopped_services)
+        _num_running = _num_services - _num_stopped
+        _stopped_services = ", ".join(map(lambda x: x[1],_stopped_services))
+        if _num_stopped > 0:
+            return [f"2 Services running_services={_num_running}|stopped_service={_num_stopped} Services: {_stopped_services} not running"]
+        return [f"0 Services running_services={_num_running}|stopped_service={_num_stopped} All Services running"]
+
 
     def check_dhcp(self):
         _ret = ["<<<isc_dhcpd>>>"]
@@ -458,7 +477,7 @@ class checkmk_checker(object):
                             _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} waiting on Port {local_port}/{protocol} {expiredate}'.format(**_server))
                 except:
                     _ret.append('2 "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:/{protocol} {expiredate}'.format(**_server))
-                    raise
+                    continue
             else:
                 if not _server.get("maxclients"):
                     _max_clients = ipaddress.IPv4Network(_server.get("tunnel_network")).num_addresses -2
@@ -798,7 +817,7 @@ class checkmk_checker(object):
         if cmdline:
             args = list(args) + shlex.split(cmdline,posix=True)
         try:
-            return subprocess.check_output(args,encoding="utf-8",shell=shell)
+            return subprocess.check_output(args,encoding="utf-8",shell=shell,stderr=subprocess.DEVNULL)
         except subprocess.CalledProcessError as e:
             return ""
 
