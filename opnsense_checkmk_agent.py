@@ -22,11 +22,12 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.73"
+__VERSION__ = "0.79"
 
 import sys
 import os
 import shlex
+import glob
 import re
 import time
 import json
@@ -41,10 +42,15 @@ import base64
 import traceback
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from xml.etree import cElementTree as ELementTree
 from collections import Counter,defaultdict
 from pprint import pprint
 from socketserver import TCPServer,StreamRequestHandler
+BASEDIR = os.path.dirname(os.path.abspath(os.path.basename(__file__)))
+LOCALDIR = os.path.join(BASEDIR,"local")
 
 class object_dict(defaultdict):
     def __getattr__(self,name):
@@ -70,45 +76,119 @@ def etree_to_dict(t):
             d[t.tag] = text
     return d
 
+def pad_pkcs7(message,size=16):
+    _pad = size - (len(message) % size)
+    if type(message) == str:
+        return message + chr(_pad) * _pad
+    else:
+        return message + bytes([_pad]) * _pad
+
 class checkmk_handler(StreamRequestHandler):
     def handle(self):
         with self.server._mutex:
             try:
-                _strmsg = self.server.do_checks()
+                _strmsg = self.server.do_checks(remote_ip=self.client_address[0])
             except Exception as e:
-                _strmsg = str(e)
-            with self.wfile as _f:
-                _f.write(_strmsg.encode("utf-8"))
+                raise
+                _strmsg = str(e).encode("utf-8")
+            try:
+                self.wfile.write(_strmsg)
+            except:
+                raise
+                pass
 
 class checkmk_checker(object):
     _certificate_timestamp = 0
+    _check_cache = {}
     _datastore_mutex = threading.RLock()
     _datastore = object_dict()
-    def do_checks(self,debug=False):
+
+    def encrypt(self,message,password='secretpassword'):
+        SALT_LENGTH = 8
+        KEY_LENGTH = 32
+        IV_LENGTH = 16
+        PBKDF2_CYCLES = 10_000
+        SALT = b"Salted__"
+        _backend = crypto_default_backend()
+        _kdf_key =  PBKDF2HMAC(
+            algorithm = hashes.SHA256,
+            length = KEY_LENGTH + IV_LENGTH,
+            salt = SALT,
+            iterations = PBKDF2_CYCLES,
+            backend = _backend
+        ).derive(password.encode("utf-8"))
+        _key, _iv = _kdf_key[:KEY_LENGTH],_kdf_key[KEY_LENGTH:]
+        _encryptor = Cipher(
+            algorithms.AES(_key),
+            modes.CBC(_iv),
+            backend = _backend
+        ).encryptor()
+        message = pad_pkcs7(message)
+        message = message.encode("utf-8")
+        _encrypted_message = _encryptor.update(message) + _encryptor.finalize()
+        return pad_pkcs7(b"03",10) + SALT + _encrypted_message
+
+    def _encrypt(self,message):
+        _cmd = shlex.split('openssl enc -aes-256-cbc -md sha256 -iter 10000 -k "secretpassword"',posix=True)
+        _proc = subprocess.Popen(_cmd,stderr=subprocess.DEVNULL,stdout=subprocess.PIPE,stdin=subprocess.PIPE)
+        _out,_err = _proc.communicate(input=message.encode("utf-8"))
+        return b"03" + _out
+
+    def do_checks(self,debug=False,remote_ip=None,**kwargs):
         self._getosinfo()
         _errors = []
+        _failed_sections = []
         _lines = ["<<<check_mk>>>"]
         _lines.append("AgentOS: {os}".format(**self._info))
         _lines.append(f"Version: {__VERSION__}")
         _lines.append("Hostname: {hostname}".format(**self._info))
+        if self.onlyfrom:
+            _lines.append("OnlyFrom: {0}".format(",".join(self.onlyfrom)))
+
+        _lines.append(f"LocalDirectory: {LOCALDIR}")
+
         for _check in dir(self):
             if _check.startswith("check_"):
+                _name = _check.split("_",1)[1]
                 try:
                     _lines += getattr(self,_check)()
                 except:
+                    _failed_sections.append(_name)
                     _errors.append(traceback.format_exc())
+
         _lines.append("<<<local:sep(0)>>>")
         for _check in dir(self):
             if _check.startswith("checklocal_"):
+                _name = _check.split("_",1)[1]
                 try:
                     _lines += getattr(self,_check)()
                 except:
+                    _failed_sections.append(_name)
                     _errors.append(traceback.format_exc())
+
+        if os.path.isdir(LOCALDIR):
+            for _local_file in glob.glob(f"{LOCALDIR}/**",recursive=True):
+                if os.path.isfile(_local_file) and os.access(_local_file,os.X_OK):
+                    try:
+                        _cachetime = int(_local_file.split(os.path.sep)[-2])
+                    except:
+                        _cachetime = 0
+                    try:
+                        _lines.append(self._run_cache_prog(_local_file,_cachetime))
+                    except:
+                        _errors.append(traceback.format_exc())
+
         _lines.append("")
         if debug:
             sys.stderr.write("\n".join(_errors))
             sys.stderr.flush()
-        return "\n".join(_lines)
+        if _failed_sections:
+            _lines.append("<<<check_mk>>>")
+            _lines.append("FailedPythonPlugins: {0}".format(",".join(_failed_sections)))
+
+        if self.encryptionkey:
+            return self.encrypt("\n".join(_lines),password=self.encryptionkey)
+        return "\n".join(_lines).encode("utf-8")
 
     def _get_storedata(self,section,key):
         with self._datastore_mutex:
@@ -203,7 +283,7 @@ class checkmk_checker(object):
     def get_opnsense_ipaddr(self):
         try:
             _ret = {}
-            for _if,_ip,_mask in re.findall("^([\w_]+):\sflags=(?:8943|8051|8043).*?inet\s([\d.]+)\snetmask\s0x([a-f0-9]+)",subprocess.check_output("ifconfig",encoding="utf-8"),re.DOTALL | re.M):
+            for _if,_ip,_mask in re.findall("^([\w_]+):\sflags=(?:8943|8051|8043).*?inet\s([\d.]+)\snetmask\s0x([a-f0-9]+)",self._run_prog("ifconfig"),re.DOTALL | re.M):
                 _ret[_if] = "{0}/{1}".format(_ip,str(bin(int(_mask,16))).count("1"))
             return _ret
         except:
@@ -248,7 +328,7 @@ class checkmk_checker(object):
         _interface_status = dict(
             map(lambda x: (x[0],(x[1:])),
                 re.findall("^(?P<iface>[\w.]+):.*?(?P<adminstate>UP|DOWN),.*?\n(?:\s+(?:media:.*?(?P<speed>\d+G?).*?\<(?P<duplex>.*?)\>|(?:status:\s(?P<operstate>[ \w]+))|).*?\n)*",
-                subprocess.check_output("ifconfig",encoding="utf-8"),re.M)
+                self._run_prog("ifconfig"),re.M)
             )
         )
         _interface_data = self._run_prog("/usr/bin/netstat -i -b -d -n -W -f link").split("\n")
@@ -290,7 +370,7 @@ class checkmk_checker(object):
     def checklocal_services(self):
         _phpcode = '<?php require_once("config.inc");require_once("system.inc"); require_once("plugins.inc"); require_once("util.inc"); foreach(plugins_services() as $_service) { printf("%s;%s;%s\n",$_service["name"],$_service["description"],service_status($_service));} ?>'
         _proc = subprocess.Popen(["php"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,encoding="utf-8")
-        _data,_ = _proc.communicate(input=_phpcode)
+        _data,_ = _proc.communicate(input=_phpcode,timeout=15)
         _services = []
         for _service in _data.strip().split("\n"):
             _services.append(_service.split(";"))
@@ -561,7 +641,7 @@ class checkmk_checker(object):
 
     def checklocal_ipsec(self):
         _ret = []
-        _json_data = subprocess.check_output("/usr/local/opnsense/scripts/ipsec/list_status.py",encoding="utf-8")
+        _json_data = self._run_prog("/usr/local/opnsense/scripts/ipsec/list_status.py")
         if len(_json_data.strip()) < 20:
             return []
         for _con in json.loads(_json_data).values():
@@ -605,7 +685,7 @@ class checkmk_checker(object):
             _client["bytes_sent"] = 0
             _client["status"] = 2
 
-        _dump = subprocess.check_output(["wg","show","all","dump"],encoding="utf-8").strip()
+        _dump = self._run_prog(["wg","show","all","dump"]).strip()
         for _line in _dump.split("\n"):
             _values = _line.split("\t")
             if len(_values) != 9:
@@ -629,7 +709,7 @@ class checkmk_checker(object):
     def checklocal_unbound(self):
         _ret = []
         try:
-            _output = subprocess.check_output(["/usr/local/sbin/unbound-control", "-c", "/var/unbound/unbound.conf", "stats_noreset"],encoding="utf-8",stderr=subprocess.DEVNULL)
+            _output = self._run_prog(["/usr/local/sbin/unbound-control", "-c", "/var/unbound/unbound.conf", "stats_noreset"])
             _unbound_stat = dict(
                 map(
                     lambda x: (x[0].replace(".","_"),float(x[1])),
@@ -732,7 +812,7 @@ class checkmk_checker(object):
 
     def check_kernel(self):
         _ret = ["<<<kernel>>>"]
-        _out = self._run_prog("sysctl -a")
+        _out = self._run_prog("sysctl -a",timeout=10)
         _kernel = dict([_v.split(": ") for _v in _out.split("\n") if len(_v.split(": ")) == 2])
         _ret.append("{0:.0f}".format(time.time()))
         _ret.append("cpu {0} {1} {2} {4} {3}".format(*(_kernel.get("kern.cp_time","").split(" "))))
@@ -784,7 +864,7 @@ class checkmk_checker(object):
 
     def check_ntp(self):
         _ret = ["<<<ntp>>>"]
-        for _line in self._run_prog("ntpq -np").split("\n")[2:]:
+        for _line in self._run_prog("ntpq -np",timeout=30).split("\n")[2:]:
             if _line.strip():
                 _ret.append("{0} {1}".format(_line[0],_line[1:]))
         return _ret
@@ -813,18 +893,82 @@ class checkmk_checker(object):
         _ret.append(f"{_uptime_sec} {_idle_sec}")
         return _ret
 
-    def _run_prog(self,cmdline="",*args,shell=False):
-        if cmdline:
-            args = list(args) + shlex.split(cmdline,posix=True)
+    def _run_prog(self,cmdline="",*args,shell=False,timeout=60):
+        if type(cmdline) == str:
+            _process = shlex.split(cmdline,posix=True)
+        else:
+            _process = cmdline
         try:
-            return subprocess.check_output(args,encoding="utf-8",shell=shell,stderr=subprocess.DEVNULL)
+            return subprocess.check_output(_process,encoding="utf-8",shell=shell,stderr=subprocess.DEVNULL,timeout=timeout)
         except subprocess.CalledProcessError as e:
             return ""
+        except subprocess.TimeoutExpired:
+            return ""
 
+    def _run_cache_prog(self,cmdline="",cachetime=10,*args,shell=False):
+        if type(cmdline) == str:
+            _process = shlex.split(cmdline,posix=True)
+        else:
+            _process = cmdline
+        _process_id = "".join(_process)
+        _runner = self._check_cache.get(_process_id)
+        if _runner == None:
+            _runner = checkmk_cached_process(_process,shell=shell)
+            self._check_cache[_process_id] = _runner
+        return _runner.get(cachetime)
+
+
+class checkmk_cached_process(object):
+    def __init__(self,process,shell=False):
+        self._processs = process
+        self._islocal = os.path.dirname(process[0]).startswith(LOCALDIR)
+        self._shell = shell
+        self._mutex = threading.Lock()
+        with self._mutex:
+            self._data = (0,"")
+            self._thread = None
+
+    def _runner(self,timeout):
+        try:
+            _data = subprocess.check_output(self._processs,shell=self._shell,encoding="utf-8",stderr=subprocess.DEVNULL,timeout=timeout)
+        except subprocess.CalledProcessError as e:
+            _data = ""
+        except subprocess.TimeoutExpired:
+            _data = ""
+        with self._mutex:
+            self._data = (int(time.time()),_data)
+            self._thread = None
+
+    def get(self,cachetime):
+        with self._mutex:
+            _now = time.time()
+            _mtime = self._data[0]
+        if _now - _mtime > cachetime or cachetime == 0:
+            if not self._thread:
+                if cachetime > 0:
+                    _timeout = cachetime*2-1
+                else:
+                    _timeout = None
+                with self._mutex:
+                    self._thread = threading.Thread(target=self._runner,args=[_timeout])
+                self._thread.start()
+
+            self._thread.join(30) ## waitmax
+        with self._mutex:
+            _mtime, _data = self._data
+        if not _data.strip():
+            return ""
+        if self._islocal:
+            _data = "".join([f"cached({_mtime},{cachetime}) {_line}" for _line in _data.splitlines(True) if len(_line.strip()) > 0])
+        else:
+            _data = re.sub("\B[<]{3}(.*?)[>]{3}\B",f"<<<\\1:cached({_mtime},{cachetime})>>>",_data)
+        return _data
 
 class checkmk_server(TCPServer,checkmk_checker):
-    def __init__(self,port,pidfile,user,**kwargs):
+    def __init__(self,port,pidfile,user,onlyfrom=None,encryptionkey=None,**kwargs):
         self.pidfile = pidfile
+        self.onlyfrom=onlyfrom.split(",") if onlyfrom else None
+        self.encryptionkey = encryptionkey
         self._mutex = threading.Lock()
         self.user = pwd.getpwnam(user)
         self.allow_reuse_address = True
@@ -835,6 +979,11 @@ class checkmk_server(TCPServer,checkmk_checker):
         if os.getuid() != _uid:
             os.setgid(_gid)
             os.setuid(_uid)
+
+    def verify_request(self, request, client_address):
+        if self.onlyfrom and client_address[0] not in self.onlyfrom:
+            return False
+        return True
 
     def server_start(self):
         sys.stderr.write("starting checkmk_agent\n")
@@ -979,7 +1128,7 @@ class smart_disc(object):
 
     def _get_data(self):
         try:
-            self._smartctl_output = subprocess.check_output(["smartctl","-a","-n","standby", f"/dev/{self.device}"],encoding=sys.stdout.encoding)
+            self._smartctl_output = subprocess.check_output(["smartctl","-a","-n","standby", f"/dev/{self.device}"],encoding=sys.stdout.encoding,timeout=10)
         except subprocess.CalledProcessError as e:
             if e.returncode & 0x1:
                 raise
@@ -993,6 +1142,9 @@ class smart_disc(object):
                 _status = "SMART Health Status:  DISK FAILING"
                 
             self._smartctl_output += f"\n{_status}\n"
+        except subprocess.TimeoutExpired:
+            self._smartctl_output += "\nSMART smartctl Timeout\n"
+
 
     def __str__(self):
         _ret = []
@@ -1011,17 +1163,21 @@ if __name__ == "__main__":
     _parser.add_argument("--port",type=int,default=6556,
         help=_("Port checkmk_agent listen"))
     _parser.add_argument("--start",action="store_true",
-        help=_(""))
+        help=_("start the daemon"))
     _parser.add_argument("--stop",action="store_true",
-        help=_(""))
+        help=_("stop the daemon"))
     _parser.add_argument("--nodaemon",action="store_true",
-        help=_(""))
+        help=_("run in foreground"))
     _parser.add_argument("--status",action="store_true",
-        help=_(""))
+        help=_("show status if running"))
     _parser.add_argument("--user",type=str,default="root",
         help=_(""))
+    _parser.add_argument("--encrypt",type=str,dest="encryptionkey",
+        help=_("Encryption password (do not use from cmdline)"))
     _parser.add_argument("--pidfile",type=str,default="/var/run/checkmk_agent.pid",
         help=_(""))
+    _parser.add_argument("--onlyfrom",type=str,
+        help=_("comma seperated ip addresses to allow"))
     _parser.add_argument("--debug",action="store_true",
         help=_("debug Ausgabe"))
     args = _parser.parse_args()
