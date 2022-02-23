@@ -213,7 +213,7 @@ class checkmk_checker(object):
             _current_firmware = {}
         self._info = {
             "os"                : _info.get("product_name"),
-            "os_version"        : _info.get("product_version"),
+            "os_version"        : _current_firmware.get("version"),
             "version_age"       : _current_firmware.get("age",0),
             "config_age"        : int(time.time() - _config_modified) ,
             "last_configchange" : time.strftime("%H:%M %d.%m.%Y",time.localtime(_config_modified)),
