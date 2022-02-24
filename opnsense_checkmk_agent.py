@@ -1,5 +1,3 @@
-
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # vim: set fileencoding=utf-8:noet
@@ -1291,8 +1289,3 @@ if __name__ == "__main__":
                 sys.stderr.write(f"allready running with pid {_pid}")
                 sys.exit(1)
         _server.daemonize()
-
-Nextcloud ist nicht böse! – Die Vorhhölle
-Impressum · Datenschutzerklärung
-
-Hole Dir Dein eigenes kostenloses Konto
