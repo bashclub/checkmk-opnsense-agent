@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # vim: set fileencoding=utf-8:noet
@@ -22,7 +24,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.79"
+__VERSION__ = "0.82"
 
 import sys
 import os
@@ -49,8 +51,15 @@ from xml.etree import cElementTree as ELementTree
 from collections import Counter,defaultdict
 from pprint import pprint
 from socketserver import TCPServer,StreamRequestHandler
-BASEDIR = os.path.dirname(os.path.abspath(os.path.basename(__file__)))
+SCRIPTPATH = os.path.abspath(os.path.basename(__file__))
+if os.path.islink(SCRIPTPATH):
+    SCRIPTPATH = os.path.realpath(os.readlink(SCRIPTPATH))
+BASEDIR = os.path.dirname(SCRIPTPATH)
+if BASEDIR.endswith("/bin"):
+    BASEDIR = BASEDIR[:-4]
+MK_CONFDIR = os.path.join(BASEDIR,"etc")
 LOCALDIR = os.path.join(BASEDIR,"local")
+SPOOLDIR = os.path.join(BASEDIR,"spool")
 
 class object_dict(defaultdict):
     def __getattr__(self,name):
@@ -146,6 +155,9 @@ class checkmk_checker(object):
             _lines.append("OnlyFrom: {0}".format(",".join(self.onlyfrom)))
 
         _lines.append(f"LocalDirectory: {LOCALDIR}")
+        _lines.append(f"AgentDirectory: {MK_CONFDIR}")
+        _lines.append(f"SpoolDirectory: {SPOOLDIR}")
+        
 
         for _check in dir(self):
             if _check.startswith("check_"):
@@ -178,6 +190,20 @@ class checkmk_checker(object):
                     except:
                         _errors.append(traceback.format_exc())
 
+        if os.path.isdir(SPOOLDIR):
+            _now = time.time()
+            for _filename in glob.glob(f"{SPOOLDIR}/*"):
+                _maxage = re.search("^\d+",_filename)
+
+                if _maxage:
+                    _maxage = int(_maxage.group())
+                    _mtime = os.stat(_filename).st_mtime
+                    if _now - _mtime > _maxage:
+                        continue
+                with open(_filename) as _f:
+                    _lines.append(_f.read())
+
+ 
         _lines.append("")
         if debug:
             sys.stderr.write("\n".join(_errors))
@@ -207,13 +233,24 @@ class checkmk_checker(object):
             _latest_firmware = list(filter(lambda x: x.get("series") == _info.get("product_series"),_changelog))[-1]
             _current_firmware = list(filter(lambda x: x.get("version") == _info.get("product_version").split("_")[0],_changelog))[0]
             _current_firmware["age"] = int(time.time() - time.mktime(time.strptime(_current_firmware.get("date"),"%B %d, %Y")))
+            _current_firmware["version"] = _info.get("product_version")
         except:
             raise
             _lastest_firmware = {}
             _current_firmware = {}
+        try:
+            _upgrade_json = json.load(open("/tmp/pkg_upgrade.json","r"))
+        except:
+            ## no firmware check done ... use short version
+            _current_firmware["version"] = _current_firmware["version"].split("_")[0]
+        try:
+            _upgrade_packages = dict(map(lambda x: (x.get("name"),x),_upgrade_json.get("upgrade_packages")))
+            _latest_firmware["version"] = _upgrade_packages.get("opnsense").get("new_version")
+        except:
+            _latest_firmware["version"] = _current_firmware["version"] ## fixme ## no upgradepckg error on opnsense ... no new version
         self._info = {
             "os"                : _info.get("product_name"),
-            "os_version"        : _info.get("product_version"),
+            "os_version"        : _current_firmware.get("version"),
             "version_age"       : _current_firmware.get("age",0),
             "config_age"        : int(time.time() - _config_modified) ,
             "last_configchange" : time.strftime("%H:%M %d.%m.%Y",time.localtime(_config_modified)),
@@ -521,7 +558,7 @@ class checkmk_checker(object):
             _server["expiredays"] = 0
             _server["expiredate"] = "no certificate found"
             if _server_cert:
-                _notvalidafter = _server_cert.get("not_valid_after")
+                _notvalidafter = _server_cert.get("not_valid_after",0)
                 _server["expiredays"] = int((_notvalidafter - _now) / 86400)
                 _server["expiredate"] = time.strftime("Cert Expire: %d.%m.%Y",time.localtime(_notvalidafter))
                 if _server["expiredays"] < 61:
@@ -611,7 +648,7 @@ class checkmk_checker(object):
             _client["description"] = _client["description"].strip(" \r\n")
             _client["expiredays"] = 0
             _client["expiredate"] = "no certificate found"
-            _client["status"] = 0
+            _client["status"] = 3
             _cert = self._get_certificate_by_cn(_client.get("common_name"))
             if _cert:
                 _notvalidafter = _cert.get("not_valid_after")
@@ -630,13 +667,13 @@ class checkmk_checker(object):
                     sum(map(lambda x: x.get("bytes_received"),_current_conn)),
                     sum(map(lambda x: x.get("bytes_sent"),_current_conn))
                 )
-                
+                _client["status"] = 0 if _client["status"] == 3 else _client["status"]
                 _client["longdescr"] = ""
                 for _conn in _current_conn:
                     _client["longdescr"] += "Server:{server} {remote_ip}:{vpn_ip} {cipher} ".format(**_conn)
                 _ret.append('{status} "OpenVPN Client: {description}" connectiontime={uptime}|connections_ssl_vpn={count}|if_in_octets={bytes_received}|if_out_octets={bytes_sent}|expiredays={expiredays} {longdescr} {expiredate}'.format(**_client))
             else:
-                _ret.append('2 "OpenVPN Client: {description}" connectiontime=0|connections_ssl_vpn=0|if_in_octets=0|if_out_octets=0|expiredays={expiredays} Nicht verbunden {expiredate}'.format(**_client))
+                _ret.append('{status} "OpenVPN Client: {description}" connectiontime=0|connections_ssl_vpn=0|if_in_octets=0|if_out_octets=0|expiredays={expiredays} Nicht verbunden {expiredate}'.format(**_client))
         return _ret
 
     def checklocal_ipsec(self):
@@ -721,8 +758,6 @@ class checkmk_checker(object):
             _ret.append("2 \"Unbound DNS\" dns_successes=0|dns_recursion=0|dns_cachehits=0|dns_cachemiss=0|avg_response_time=0 Unbound not running")
         return _ret
 
-
-
     def checklocal_acmeclient(self):
         _ret = []
         _now = time.time()
@@ -735,27 +770,31 @@ class checkmk_checker(object):
         for _cert_info in _acmecerts:
             if _cert_info.get("enabled") != "1":
                 continue
-            _certificate = self._get_certificate(_cert_info.get("certRefId"))
-            if type(_certificate) != dict:
-                _certificate = {}
-            _expiredays = _certificate.get("not_valid_after",_now) - _now
-            _certificate_age = _now - int(_certificate.get("not_valid_before",_cert_info.get("lastUpdate",_now)))
-            _cert_info["age"] = int(_certificate_age)
-            _cert_info["status"] = 0
-            if _cert_info.get("statusCode") == "200":
-                if _certificate_age < int(_cert_info.get("renewInterval",0)):
-                    _cert_info["status"] = 1
-            else:
-                _cert_info["status"] = 1
-            if _expiredays < 10:
-                _cert_info["status"] = 2
             if not _cert_info.get("description"):
-                _cert_info["description"] = _cert_info.get("name",_certificate.get("common_name"))
-            _cert_info["issuer"] = _certificate.get("issuer")
-            _cert_info["lastupdatedate"] = time.strftime("%d.%m.%Y",time.localtime(int(_cert_info.get("lastUpdate",0))))
-            _cert_info["expiredate"] = time.strftime("%d.%m.%Y",time.localtime(_certificate.get("not_valid_after",0)))
-            _ret.append("{status} \"ACME Cert: {description}\" age={age} Last Update: {lastupdatedate} Status: {statusCode} Cert expire: {expiredate}".format(**_cert_info))
-
+                _cert_info["description"] = _cert_info.get("name","unknown")
+            _certificate = self._get_certificate(_cert_info.get("certRefId"))
+            _cert_info["status"] = 1
+            if _certificate:
+                if type(_certificate) != dict:
+                    _certificate = {}
+                _expiredays = _certificate.get("not_valid_after",_now) - _now
+                _not_valid_before = _certificate.get("not_valid_before",_cert_info.get("lastUpdate"))
+                _certificate_age = _now - int(_not_valid_before if _not_valid_before else _now)
+                _cert_info["age"] = int(_certificate_age)
+                if _cert_info.get("statusCode") == "200":
+                    if _certificate_age > float(_cert_info.get("renewInterval","inf")):
+                        _cert_info["status"] = 0
+                if _expiredays < 10:
+                    _cert_info["status"] = 2
+                _cert_info["issuer"] = _certificate.get("issuer")
+                _cert_info["lastupdatedate"] = time.strftime("%d.%m.%Y",time.localtime(int(_cert_info.get("lastUpdate",0))))
+                _cert_info["expiredate"] = time.strftime("%d.%m.%Y",time.localtime(_certificate.get("not_valid_after",0)))
+                _ret.append("{status} \"ACME Cert: {description}\" age={age} Last Update: {lastupdatedate} Status: {statusCode} Cert expire: {expiredate}".format(**_cert_info))
+            else:
+                if _cert_info.get("statusCode") == "100":
+                    _ret.append("1 \"ACME Cert: {description}\" age=0 Status: pending".format(**_cert_info))
+                else:
+                    _ret.append("2 \"ACME Cert: {description}\" age=0 Error Status: {statusCode}".format(**_cert_info))
         return _ret
 
     def check_haproxy(self):
@@ -812,13 +851,34 @@ class checkmk_checker(object):
 
     def check_kernel(self):
         _ret = ["<<<kernel>>>"]
-        _out = self._run_prog("sysctl -a",timeout=10)
+        _out = self._run_prog("sysctl vm.stats",timeout=10)
         _kernel = dict([_v.split(": ") for _v in _out.split("\n") if len(_v.split(": ")) == 2])
         _ret.append("{0:.0f}".format(time.time()))
-        _ret.append("cpu {0} {1} {2} {4} {3}".format(*(_kernel.get("kern.cp_time","").split(" "))))
+        _ret.append("cpu {0} {1} {2} {4} {3}".format(*(self._run_prog("sysctl -n kern.cp_time","").split(" "))))
         _ret.append("ctxt {0}".format(_kernel.get("vm.stats.sys.v_swtch")))
         _sum = sum(map(lambda x: int(x[1]),(filter(lambda x: x[0] in ("vm.stats.vm.v_forks","vm.stats.vm.v_vforks","vm.stats.vm.v_rforks","vm.stats.vm.v_kthreads"),_kernel.items()))))
         _ret.append("processes {0}".format(_sum))
+        return _ret
+
+    def check_mem(self):
+        _ret = ["<<<statgrab_mem>>>"]
+        _pagesize = int(self._run_prog("sysctl -n hw.pagesize"))
+        _out = self._run_prog("sysctl vm.stats",timeout=10)
+        _mem = dict(map(lambda x: (x[0],int(x[1])) ,[_v.split(": ") for _v in _out.split("\n") if len(_v.split(": ")) == 2]))
+        _mem_cache = _mem.get("vm.stats.vm.v_cache_count") * _pagesize
+        _mem_free = _mem.get("vm.stats.vm.v_free_count") * _pagesize
+        _mem_inactive = _mem.get("vm.stats.vm.v_inactive_count") * _pagesize
+        _mem_total = _mem.get("vm.stats.vm.v_page_count") * _pagesize
+        _mem_avail = _mem_inactive + _mem_cache + _mem_free
+        _mem_used = _mem_total - _mem_avail # fixme mem.hw
+        _ret.append("mem.cache {0}".format(_mem_cache))
+        _ret.append("mem.free {0}".format(_mem_free))
+        _ret.append("mem.total {0}".format(_mem_total))
+        _ret.append("mem.used {0}".format(_mem_used))
+        _ret.append("swap.free 0")
+        _ret.append("swap.total 0")
+        _ret.append("swap.used 0")
+        
         return _ret
 
     def check_zpool(self):
@@ -1215,7 +1275,8 @@ if __name__ == "__main__":
         os.kill(int(_pid),signal.SIGTERM)
 
     elif args.debug:
-        print(_server.do_checks(debug=True))
+        sys.stdout.write(_server.do_checks(debug=True).decode(sys.stdout.encoding))
+        sys.stdout.flush()
     elif args.nodaemon:
         _server.server_start()
     else:
@@ -1230,3 +1291,8 @@ if __name__ == "__main__":
                 sys.stderr.write(f"allready running with pid {_pid}")
                 sys.exit(1)
         _server.daemonize()
+
+Nextcloud ist nicht böse! – Die Vorhhölle
+Impressum · Datenschutzerklärung
+
+Hole Dir Dein eigenes kostenloses Konto
