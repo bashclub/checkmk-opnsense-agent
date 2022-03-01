@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.82"
+__VERSION__ = "0.83"
 
 import sys
 import os
@@ -500,7 +500,10 @@ class checkmk_checker(object):
 
     def checklocal_gateway(self):
         _ret = []
-        _gateway_items = self._config_reader().get("gateways").get("gateway_item",[])
+        _gateways = self._config_reader().get("gateways")
+        if not _gateways:
+            return []
+        _gateway_items = _gateways.get("gateway_item",[])
         if type(_gateway_items) != list:
             _gateway_items = [_gateway_items] if _gateway_items else []
         _interfaces = self._config_reader().get("interfaces",{})
