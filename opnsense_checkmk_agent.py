@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.83"
+__VERSION__ = "0.84"
 
 import sys
 import os
@@ -229,7 +229,7 @@ class checkmk_checker(object):
         _config_modified = os.stat("/conf/config.xml").st_mtime
         try:
             _latest_firmware = list(filter(lambda x: x.get("series") == _info.get("product_series"),_changelog))[-1]
-            _current_firmware = list(filter(lambda x: x.get("version") == _info.get("product_version").split("_")[0],_changelog))[0]
+            _current_firmware = list(filter(lambda x: x.get("version") == _info.get("product_version").split("_")[0],_changelog))[0].copy() ## not same
             _current_firmware["age"] = int(time.time() - time.mktime(time.strptime(_current_firmware.get("date"),"%B %d, %Y")))
             _current_firmware["version"] = _info.get("product_version")
         except:
@@ -238,13 +238,11 @@ class checkmk_checker(object):
             _current_firmware = {}
         try:
             _upgrade_json = json.load(open("/tmp/pkg_upgrade.json","r"))
-        except:
-            ## no firmware check done ... use short version
-            _current_firmware["version"] = _current_firmware["version"].split("_")[0]
-        try:
             _upgrade_packages = dict(map(lambda x: (x.get("name"),x),_upgrade_json.get("upgrade_packages")))
+            _current_firmware["version"] = _upgrade_packages.get("opnsense").get("current_version")
             _latest_firmware["version"] = _upgrade_packages.get("opnsense").get("new_version")
         except:
+            _current_firmware["version"] = _current_firmware["version"].split("_")[0]
             _latest_firmware["version"] = _current_firmware["version"] ## fixme ## no upgradepckg error on opnsense ... no new version
         self._info = {
             "os"                : _info.get("product_name"),
@@ -354,7 +352,44 @@ class checkmk_checker(object):
         if self._info.get("os_version") != self._info.get("latest_version"):
             return ["1 Firmware update_available=1|last_updated={version_age}|apply_finish_time={config_age} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**self._info)]
         return ["0 Firmware update_available=0|last_updated={version_age}|apply_finish_time={config_age} Version {os_version}  Config changed: {last_configchange}".format(**self._info)]
-        
+
+
+    def _new_check_net(self):
+        _now = int(time.time())
+        _ret = ["<<<statgrab_net>>>"]
+        _interface_data = []
+        _interface_data = self._run_prog("/usr/bin/netstat -i -b -d -n -W -f link").split("\n")
+        _header = _interface_data[0].lower()
+        _header = _header.replace("pkts","packets").replace("coll","collisions").replace("errs","error").replace("ibytes","rx").replace("obytes","tx")
+        _header = _header.split()
+        _interface_stats = dict(
+            map(
+                lambda x: (x.get("name"),x),
+                [
+                    dict(zip(_header,_ifdata.split()))
+                    for _ifdata in _interface_data[1:] if _ifdata
+                ]
+            )
+        )
+
+        _ifconfig_out = self._run_prog("ifconfig -m -v")
+        _ifconfig_out += "END" ## fix regex
+        _all_interfaces = object_dict()
+        for _interface, _data in re.findall("^(?P<iface>[\w.]+):\s(?P<data>.*?(?=^\w))",_ifconfig_out,re.DOTALL | re.MULTILINE):
+            _interface_dict = object_dict()
+            _interface_dict.update(_interface_stats.get(_interface,{}))
+            _interface_dict["up"] = "false"
+            for _key, _val in re.findall("^\s*(\w+)[:\s=]+(.*?)$",_data,re.MULTILINE):
+                if _key == "description":
+                    _interface_dict["interface_name"] = _val.strip()
+                if _key == "ether":
+                    _interface_dict["phys_address"] = _val.strip()
+                if _key == "status" and _val.strip() == "active":
+                    _interface_dict["up"] = "true"
+                if _key == "media":
+                    re.findall()
+
+            _all_interfaces[_interface] = _interface_dict
 
     def check_net(self):
         _opnsense_ifs = self.get_opnsense_interfaces()
