@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.84"
+__VERSION__ = "0.85"
 
 import sys
 import os
@@ -90,6 +90,13 @@ def pad_pkcs7(message,size=16):
     else:
         return message + bytes([_pad]) * _pad
 
+def check_pid(pid):
+    try:
+        os.kill(pid,0)
+        return True
+    except OSError: ## no permission check currently root
+        return False
+
 class checkmk_handler(StreamRequestHandler):
     def handle(self):
         with self.server._mutex:
@@ -135,7 +142,7 @@ class checkmk_checker(object):
         _encrypted_message = _encryptor.update(message) + _encryptor.finalize()
         return pad_pkcs7(b"03",10) + SALT + _encrypted_message
 
-    def _encrypt(self,message):
+    def _encrypt(self,message): ## openssl ## todo ## remove
         _cmd = shlex.split('openssl enc -aes-256-cbc -md sha256 -iter 10000 -k "secretpassword"',posix=True)
         _proc = subprocess.Popen(_cmd,stderr=subprocess.DEVNULL,stdout=subprocess.PIPE,stdin=subprocess.PIPE)
         _out,_err = _proc.communicate(input=message.encode("utf-8"))
@@ -155,7 +162,6 @@ class checkmk_checker(object):
         _lines.append(f"LocalDirectory: {LOCALDIR}")
         _lines.append(f"AgentDirectory: {MK_CONFDIR}")
         _lines.append(f"SpoolDirectory: {SPOOLDIR}")
-        
 
         for _check in dir(self):
             if _check.startswith("check_"):
@@ -201,7 +207,6 @@ class checkmk_checker(object):
                 with open(_filename) as _f:
                     _lines.append(_f.read())
 
- 
         _lines.append("")
         if debug:
             sys.stderr.write("\n".join(_errors))
@@ -353,9 +358,16 @@ class checkmk_checker(object):
             return ["1 Firmware update_available=1|last_updated={version_age}|apply_finish_time={config_age} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**self._info)]
         return ["0 Firmware update_available=0|last_updated={version_age}|apply_finish_time={config_age} Version {os_version}  Config changed: {last_configchange}".format(**self._info)]
 
+    def check_label(self):
+        _ret = ["<<<labels:sep(0)>>>"]
+        _dmsg = self._run_prog("dmesg",timeout=10)
+        if _dmsg.lower().find("hypervisor:") > -1:
+            _ret.append('{{"cmk/device_type":"vm"}}')
+        return _ret
 
-    def _new_check_net(self):
+    def check_net(self):
         _now = int(time.time())
+        _opnsense_ifs = self.get_opnsense_interfaces()
         _ret = ["<<<statgrab_net>>>"]
         _interface_data = []
         _interface_data = self._run_prog("/usr/bin/netstat -i -b -d -n -W -f link").split("\n")
@@ -378,20 +390,77 @@ class checkmk_checker(object):
         for _interface, _data in re.findall("^(?P<iface>[\w.]+):\s(?P<data>.*?(?=^\w))",_ifconfig_out,re.DOTALL | re.MULTILINE):
             _interface_dict = object_dict()
             _interface_dict.update(_interface_stats.get(_interface,{}))
+            _interface_dict["interface_name"] = _opnsense_ifs.get(_interface,_interface)
             _interface_dict["up"] = "false"
+            _interface_dict["systime"] = _now
             for _key, _val in re.findall("^\s*(\w+)[:\s=]+(.*?)$",_data,re.MULTILINE):
                 if _key == "description":
-                    _interface_dict["interface_name"] = _val.strip()
+                    _interface_dict["interface_name"] = _val.strip().replace(" ","_")
+                if _key == "groups":
+                    _interface_dict["groups"] = _val.strip().split()
                 if _key == "ether":
                     _interface_dict["phys_address"] = _val.strip()
                 if _key == "status" and _val.strip() == "active":
                     _interface_dict["up"] = "true"
+                if _key == "flags":
+                    _interface_dict["flags"] = _val
                 if _key == "media":
-                    re.findall()
+                    _match = re.search("\((?P<speed>\d+G?)base(?:.*?<(?P<duplex>.*?)>)?",_val)
+                    if _match:
+                        _interface_dict["speed"] = _match.group("speed").replace("G","000")
+                        _interface_dict["duplex"] = _match.group("duplex")
+                if _key == "inet":
+                    _match = re.search("^(?P<ipaddr>[\d.]+).*?netmask\s(?P<netmask>0x[0-9a-f]{8}).*?(?:vhid\s(?P<vhid>\d+)|$)",_val,re.M)
+                    if _match:
+                        _cidr = bin(int(_match.group("netmask"),16)).count("1")
+                        _ipaddr = _match.group("ipaddr")
+                        _vhid = _match.group("vhid")
+                        ## fixme ipaddr dict / vhid dict
+                if _key == "inet6":
+                    _match = re.search("^(?P<ipaddr>[0-9a-f]+).*?prefixlen\s(?P<prefix>\d+).*?(?:vhid\s(?P<vhid>\d+)|$)",_val,re.M)
+                    if _match:
+                        _ipaddr = _match.group("ipaddr")
+                        _prefix = _match.group("prefix")
+                        _vhid = _match.group("vhid")
+                        ## fixme ipaddr dict / vhid dict
+                if _key == "carp":
+                    _match = re.search("(?P<status>MASTER|BACKUP)\svhid\s(?P<vhid>\d+)\sadvbase\s(?P<base>\d+)\sadvskew\s(?P<skew>\d+)",_val,re.M)
+                    if _match:
+                        _carpstatus = _match.group("status")
+                        _vhid = _match.group("vhid")
+                        _advbase = _match.group("base")
+                        _advskew = _match.group("skew")
+                        ## fixme vhid dict
+                if _key == "id":
+                    _match = re.search("priority\s(\d+)",_val)
+                    if _match:
+                        _interface_dict["bridge_prio"] = _match.group(1)
+                if _key == "member":
+                    _member = _interface_dict.get("member",[])
+                    _member.append(_val.split()[0])
+                    _interface_dict["member"] = _member
+                if _key == "Opened":
+                    try:
+                        _pid = int(_val.split(" ")[-1])
+                        if check_pid(_pid):
+                            _interface_dict["up"] = "true"
+                    except ValueError:
+                        pass
 
+            #pprint(_interface_dict)
             _all_interfaces[_interface] = _interface_dict
+            if re.search("^[*]?(pflog|pfsync|lo)\d?",_interface):
+                continue
 
-    def check_net(self):
+            for _key,_val in _interface_dict.items():
+                if _key in ("name","network","address","flags"):
+                    continue
+                if type(_val) in (str,int,float):
+                    _ret.append(f"{_interface}.{_key} {_val}")
+
+        return _ret
+
+    def _old_check_net(self):
         _opnsense_ifs = self.get_opnsense_interfaces()
         _now = int(time.time())
         _ret = ["<<<statgrab_net>>>"]
@@ -1013,7 +1082,6 @@ class checkmk_checker(object):
             self._check_cache[_process_id] = _runner
         return _runner.get(cachetime)
 
-
 class checkmk_cached_process(object):
     def __init__(self,process,shell=False):
         self._processs = process
@@ -1240,7 +1308,6 @@ class smart_disc(object):
             self._smartctl_output += f"\n{_status}\n"
         except subprocess.TimeoutExpired:
             self._smartctl_output += "\nSMART smartctl Timeout\n"
-
 
     def __str__(self):
         _ret = []
