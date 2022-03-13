@@ -453,7 +453,8 @@ class checkmk_checker(object):
             _all_interfaces[_interface] = _interface_dict
             if re.search("^[*]?(pflog|pfsync|lo)\d?",_interface):
                 continue
-
+            if not _opnsense_ifs.get(_interface):
+                continue
             for _key,_val in _interface_dict.items():
                 if _key in ("name","network","address","flags"):
                     continue
