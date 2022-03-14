@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.87"
+__VERSION__ = "0.88"
 
 import sys
 import os
@@ -364,7 +364,7 @@ class checkmk_checker(object):
         _ret = ["<<<labels:sep(0)>>>"]
         _dmsg = self._run_prog("dmesg",timeout=10)
         if _dmsg.lower().find("hypervisor:") > -1:
-            _ret.append('{{"cmk/device_type":"vm"}}')
+            _ret.append('{"cmk/device_type":"vm"}')
         return _ret
 
     def check_net(self):
