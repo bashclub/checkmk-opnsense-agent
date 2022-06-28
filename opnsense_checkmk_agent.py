@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.95"
+__VERSION__ = "0.952"
 
 import sys
 import os
@@ -475,6 +475,8 @@ class checkmk_checker(object):
                         _cidr = _match.group("cidr")
                         _ipaddr = _match.group("ipaddr")
                         _vhid = _match.group("vhid")
+                        if not _vhid:
+                            _interface_dict["cidr"] = _cidr ## cidr wenn kein vhid
                         ## fixme ipaddr dict / vhid dict
                 if _key == "inet6":
                     _match = re.search("^(?P<ipaddr>[0-9a-f:]+)\/(?P<prefix>\d+).*?(?:vhid\s(?P<vhid>\d+)|$)",_val,re.M)
@@ -482,6 +484,8 @@ class checkmk_checker(object):
                         _ipaddr = _match.group("ipaddr")
                         _prefix = _match.group("prefix")
                         _vhid = _match.group("vhid")
+                        if not _vhid:
+                            _interface_dict["prefix"] = _prefix
                         ## fixme ipaddr dict / vhid dict
                 if _key == "carp":
                     _match = re.search("(?P<status>MASTER|BACKUP)\svhid\s(?P<vhid>\d+)\sadvbase\s(?P<base>\d+)\sadvskew\s(?P<skew>\d+)",_val,re.M)
@@ -541,7 +545,10 @@ class checkmk_checker(object):
 
     def checklocal_carpstatus(self):
         _ret = []
-        _virtual = self._config_reader().get("virtualip").get("vip")
+        _virtual = self._config_reader().get("virtualip")
+        if not _virtual:
+            return []
+        _virtual = _virtual.get("vip")
         if not _virtual:
             return []
         if type(_virtual) != list:
@@ -560,7 +567,7 @@ class checkmk_checker(object):
                 _status = 0 if _carpstatus == "BACKUP" else 1
             if not _interface:
                 continue
-            _ret.append(f"{_status} \"CARP: {_interface_name}@{_vhid}\" master={_carpstatus_num} {_carpstatus} {_ipaddr}")
+            _ret.append(f"{_status} \"CARP: {_interface_name}@{_vhid}\" master={_carpstatus_num} {_carpstatus} {_ipaddr} ({_interface})")
         return _ret
 
     def check_dhcp(self):
