@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.952"
+__VERSION__ = "0.96"
 
 import sys
 import os
@@ -571,6 +571,8 @@ class checkmk_checker(object):
         return _ret
 
     def check_dhcp(self):
+        if not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
+            return []
         _ret = ["<<<isc_dhcpd>>>"]
         _ret.append("[general]\nPID: {0}".format(self.pidof("dhcpd",-1)))
         
