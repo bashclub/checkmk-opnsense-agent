@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.88"
+__VERSION__ = "0.96"
 
 import sys
 import os
@@ -40,6 +40,11 @@ import threading
 import ipaddress
 import base64
 import traceback
+import syslog
+import requests
+from urllib3.connection import HTTPConnection
+from urllib3.connectionpool import HTTPConnectionPool
+from requests.adapters import HTTPAdapter
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend as crypto_default_backend
 from cryptography.hazmat.primitives import hashes
@@ -49,6 +54,7 @@ from xml.etree import cElementTree as ELementTree
 from collections import Counter,defaultdict
 from pprint import pprint
 from socketserver import TCPServer,StreamRequestHandler
+
 SCRIPTPATH = os.path.abspath(os.path.basename(__file__))
 if os.path.islink(SCRIPTPATH):
     SCRIPTPATH = os.path.realpath(os.readlink(SCRIPTPATH))
@@ -82,12 +88,42 @@ def etree_to_dict(t):
             d[t.tag] = text
     return d
 
+def log(message,prio="notice"):
+    priority = { 
+        "crit"      :syslog.LOG_CRIT,
+        "err"       :syslog.LOG_ERR,
+        "warning"   :syslog.LOG_WARNING,
+        "notice"    :syslog.LOG_NOTICE, 
+        "info"      :syslog.LOG_INFO, 
+    }.get(str(prio).lower(),syslog.LOG_DEBUG)
+    syslog.openlog(ident="checkmk_agent",logoption=syslog.LOG_PID | syslog.LOG_NDELAY,facility=syslog.LOG_DAEMON)
+    syslog.syslog(priority,message)
+
+
 def pad_pkcs7(message,size=16):
     _pad = size - (len(message) % size)
     if type(message) == str:
         return message + chr(_pad) * _pad
     else:
         return message + bytes([_pad]) * _pad
+
+class NginxConnection(HTTPConnection):
+    def __init__(self):
+        super().__init__("localhost")
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect("/var/run/nginx_status.sock")
+
+class NginxConnectionPool(HTTPConnectionPool):
+    def __init__(self):
+        super().__init__("localhost")
+    def _new_conn(self):
+        return NginxConnection()
+
+class NginxAdapter(HTTPAdapter):
+    def get_connection(self, url, proxies=None):
+        return NginxConnectionPool()
+
 
 def check_pid(pid):
     try:
@@ -211,8 +247,8 @@ class checkmk_checker(object):
 
         _lines.append("")
         if debug:
-            sys.stderr.write("\n".join(_errors))
-            sys.stderr.flush()
+            sys.stdout.write("\n".join(_errors))
+            sys.stdout.flush()
         if _failed_sections:
             _lines.append("<<<check_mk>>>")
             _lines.append("FailedPythonPlugins: {0}".format(",".join(_failed_sections)))
@@ -323,11 +359,22 @@ class checkmk_checker(object):
     def get_opnsense_ipaddr(self):
         try:
             _ret = {}
-            for _if,_ip,_mask in re.findall("^([\w_]+):\sflags=(?:8943|8051|8043).*?inet\s([\d.]+)\snetmask\s0x([a-f0-9]+)",self._run_prog("ifconfig"),re.DOTALL | re.M):
+            for _if,_ip,_mask in re.findall("^([\w_]+):\sflags=(?:8943|8051|8043|8863).*?inet\s([\d.]+)\snetmask\s0x([a-f0-9]+)",self._run_prog("ifconfig"),re.DOTALL | re.M):
                 _ret[_if] = "{0}/{1}".format(_ip,str(bin(int(_mask,16))).count("1"))
             return _ret
         except:
             return {}
+
+    def _get_opnsense_ipaddr(self):
+        RE_IPDATA = re.compile("(?P<inet>inet6?)\s(?P<ip>[\da-f:.]+)\/(?P<cidr>\d+).*?(?:vhid\s(?P<vhid>\d+)|$)|carp:\s(?P<carp_status>MASTER|BACKUP)\svhid\s(?P<carp_vhid>\d+)\sadvbase\s(?P<carp_base>\d+)\sadvskew\s(?P<carp_skew>\d)|(vlan):\s(?P<vlan>\d*)",re.DOTALL | re.M)
+        try:
+            _ret = {}
+            for _if,_data in re.findall("([\w_]+):\s(.*?)\n(?=(?:\w|$))",self._run_prog("ifconfig -f inet:cidr,inet6:cidr"),re.DOTALL | re.M):
+                _ret[_if] = RE_IPDATA.search(_data).groups()
+            return _ret
+        except:
+            return {}
+
 
     def get_opnsense_interfaces(self):
         _ifs = {}
@@ -357,8 +404,8 @@ class checkmk_checker(object):
 
     def checklocal_firmware(self):
         if self._info.get("os_version") != self._info.get("latest_version"):
-            return ["1 Firmware update_available=1|last_updated={version_age}|apply_finish_time={config_age} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**self._info)]
-        return ["0 Firmware update_available=0|last_updated={version_age}|apply_finish_time={config_age} Version {os_version}  Config changed: {last_configchange}".format(**self._info)]
+            return ["1 Firmware update_available=1|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**self._info)]
+        return ["0 Firmware update_available=0|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f} Version {os_version}  Config changed: {last_configchange}".format(**self._info)]
 
     def check_label(self):
         _ret = ["<<<labels:sep(0)>>>"]
@@ -386,14 +433,17 @@ class checkmk_checker(object):
             )
         )
 
-        _ifconfig_out = self._run_prog("ifconfig -m -v")
+        _ifconfig_out = self._run_prog("ifconfig -m -v -f inet:cidr,inet6:cidr")
         _ifconfig_out += "END" ## fix regex
-        _all_interfaces = object_dict()
+        self._all_interfaces = object_dict()
+        self._carp_interfaces = object_dict()
         for _interface, _data in re.findall("^(?P<iface>[\w.]+):\s(?P<data>.*?(?=^\w))",_ifconfig_out,re.DOTALL | re.MULTILINE):
             _interface_dict = object_dict()
             _interface_dict.update(_interface_stats.get(_interface,{}))
             _interface_dict["interface_name"] = _opnsense_ifs.get(_interface,_interface)
             _interface_dict["up"] = "false"
+            #if _interface.startswith("vmx"): ## vmware fix 10GBe (as OS Support)
+            #    _interface_dict["speed"] = "10000"
             _interface_dict["systime"] = _now
             for _key, _val in re.findall("^\s*(\w+)[:\s=]+(.*?)$",_data,re.MULTILINE):
                 if _key == "description":
@@ -405,31 +455,44 @@ class checkmk_checker(object):
                 if _key == "status" and _val.strip() == "active":
                     _interface_dict["up"] = "true"
                 if _key == "flags":
-                    _interface_dict["flags"] = _val
+                    _interface_dict["flags"] = int(re.findall("^[a-f\d]+",_val)[0],16)
+                    ## 0x1 UP
+                    ## 0x2 BROADCAST
+                    ## 0x8 LOOPBACK
+                    ## 0x10 POINTTOPOINT
+                    ## 0x40 RUNNING
+                    ## 0x100 PROMISC
+                    ## 0x800 SIMPLEX
+                    ## 0x8000 MULTICAST
                 if _key == "media":
                     _match = re.search("\((?P<speed>\d+G?)base(?:.*?<(?P<duplex>.*?)>)?",_val)
                     if _match:
                         _interface_dict["speed"] = _match.group("speed").replace("G","000")
                         _interface_dict["duplex"] = _match.group("duplex")
                 if _key == "inet":
-                    _match = re.search("^(?P<ipaddr>[\d.]+).*?netmask\s(?P<netmask>0x[0-9a-f]{8}).*?(?:vhid\s(?P<vhid>\d+)|$)",_val,re.M)
+                    _match = re.search("^(?P<ipaddr>[\d.]+)\/(?P<cidr>\d+).*?(?:vhid\s(?P<vhid>\d+)|$)",_val,re.M)
                     if _match:
-                        _cidr = bin(int(_match.group("netmask"),16)).count("1")
+                        _cidr = _match.group("cidr")
                         _ipaddr = _match.group("ipaddr")
                         _vhid = _match.group("vhid")
+                        if not _vhid:
+                            _interface_dict["cidr"] = _cidr ## cidr wenn kein vhid
                         ## fixme ipaddr dict / vhid dict
                 if _key == "inet6":
-                    _match = re.search("^(?P<ipaddr>[0-9a-f]+).*?prefixlen\s(?P<prefix>\d+).*?(?:vhid\s(?P<vhid>\d+)|$)",_val,re.M)
+                    _match = re.search("^(?P<ipaddr>[0-9a-f:]+)\/(?P<prefix>\d+).*?(?:vhid\s(?P<vhid>\d+)|$)",_val,re.M)
                     if _match:
                         _ipaddr = _match.group("ipaddr")
                         _prefix = _match.group("prefix")
                         _vhid = _match.group("vhid")
+                        if not _vhid:
+                            _interface_dict["prefix"] = _prefix
                         ## fixme ipaddr dict / vhid dict
                 if _key == "carp":
                     _match = re.search("(?P<status>MASTER|BACKUP)\svhid\s(?P<vhid>\d+)\sadvbase\s(?P<base>\d+)\sadvskew\s(?P<skew>\d+)",_val,re.M)
                     if _match:
                         _carpstatus = _match.group("status")
                         _vhid = _match.group("vhid")
+                        self._carp_interfaces[_vhid] = (_interface,_carpstatus)
                         _advbase = _match.group("base")
                         _advskew = _match.group("skew")
                         ## fixme vhid dict
@@ -449,17 +512,18 @@ class checkmk_checker(object):
                     except ValueError:
                         pass
 
-            #pprint(_interface_dict)
-            _all_interfaces[_interface] = _interface_dict
-            if re.search("^[*]?(pflog|pfsync|lo)\d?",_interface):
+            if _interface_dict["flags"] & 0x2 or _interface_dict["flags"] & 0x10: ## nur broadcast oder ptp
+                self._all_interfaces[_interface] = _interface_dict
+            else:
                 continue
+            #if re.search("^[*]?(pflog|pfsync|lo)\d?",_interface):
+            #    continue
             if not _opnsense_ifs.get(_interface):
                 continue
             for _key,_val in _interface_dict.items():
-                if _key in ("name","network","address","flags"):
-                    continue
-                if type(_val) in (str,int,float):
-                    _ret.append(f"{_interface}.{_key} {_val}")
+                if _key in ("mtu","ipackets","ierror","idrop","rx","opackets","oerror","tx","collisions","drop","interface_name","up","systime","phys_address","speed","duplex"):
+                    if type(_val) in (str,int,float):
+                        _ret.append(f"{_interface}.{_key} {_val}")
 
         return _ret
 
@@ -476,11 +540,39 @@ class checkmk_checker(object):
         _num_running = _num_services - _num_stopped
         _stopped_services = ", ".join(map(lambda x: x[1],_stopped_services))
         if _num_stopped > 0:
-            return [f"2 Services running_services={_num_running}|stopped_service={_num_stopped} Services: {_stopped_services} not running"]
-        return [f"0 Services running_services={_num_running}|stopped_service={_num_stopped} All Services running"]
+            return [f"2 Services running_services={_num_running:.0f}|stopped_service={_num_stopped:.0f} Services: {_stopped_services} not running"]
+        return [f"0 Services running_services={_num_running:.0f}|stopped_service={_num_stopped:.0f} All Services running"]
 
+    def checklocal_carpstatus(self):
+        _ret = []
+        _virtual = self._config_reader().get("virtualip")
+        if not _virtual:
+            return []
+        _virtual = _virtual.get("vip")
+        if not _virtual:
+            return []
+        if type(_virtual) != list:
+            _virtual = [_virtual]
+        for _vip in _virtual:
+            if _vip.get("mode") != "carp":
+                continue
+            _vhid = _vip.get("vhid")
+            _ipaddr = _vip.get("subnet")
+            _interface, _carpstatus = self._carp_interfaces.get(_vhid,(None,None))
+            _carpstatus_num = 1 if _carpstatus == "MASTER" else 0
+            _interface_name = self._all_interfaces.get(_interface,{}).get("interface_name",_interface)
+            if int(_vip.get("advskew")) < 50:
+                _status = 0 if _carpstatus == "MASTER" else 1
+            else:
+                _status = 0 if _carpstatus == "BACKUP" else 1
+            if not _interface:
+                continue
+            _ret.append(f"{_status} \"CARP: {_interface_name}@{_vhid}\" master={_carpstatus_num} {_carpstatus} {_ipaddr} ({_interface})")
+        return _ret
 
     def check_dhcp(self):
+        if not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
+            return []
         _ret = ["<<<isc_dhcpd>>>"]
         _ret.append("[general]\nPID: {0}".format(self.pidof("dhcpd",-1)))
         
@@ -507,6 +599,19 @@ class checkmk_checker(object):
         for _ip in sorted(_dhcpleases_dict.keys()):
             _ret.append(_ip)
         return _ret
+
+    def checklocal_pkgaudit(self):
+        try:
+            _data = json.loads(self._run_cache_prog("pkg audit -F --raw=json-compact -q",cachetime=360,ignore_error=True))
+            _vulns = _data.get("pkg_count",0)
+            if _vulns > 0:
+                _packages = ", ".join(_data.get("packages",{}).keys())
+                return [f"1 Audit issues={_vulns} Pkg: {_packages} vulnerable"]
+            raise
+        except:
+            pass
+        return ["0 Audit issues=0 OK"]
+
 
     @staticmethod
     def _read_from_openvpnsocket(vpnsocket,cmd):
@@ -554,7 +659,7 @@ class checkmk_checker(object):
                 _data = _sock.recv(1024).decode("utf-8").strip()
                 _name, _rtt, _rttsd, _loss = re.findall("(\w+)\s(\d+)\s(\d+)\s(\d+)$",_data)[0]
                 assert _name.strip() == gateway
-                return int(_rtt)/1000.0,int(_rttsd)/1000.0, int(_loss)
+                return int(_rtt)/1_000_000.0,int(_rttsd)/1_000_000.0, int(_loss)
             except:
                 raise
         return -1,-1,-1
@@ -587,7 +692,7 @@ class checkmk_checker(object):
             if _gateway.get("loss") > 90 or _gateway.get("loss") == -1:
                 _gateway["status"] = 2
 
-            _ret.append("{status} \"Gateway {descr}\" rtt={rtt}|rttsd={rttsd}|loss={loss} Gateway on Interface: {realinterface} {ipaddr}".format(**_gateway))
+            _ret.append("{status} \"Gateway {descr}\" rtt={rtt}|rttsd={rttsd}|loss={loss} Gateway on Interface: {realinterface} {gateway}".format(**_gateway))
         return _ret
 
     def checklocal_openvpn(self):
@@ -612,7 +717,7 @@ class checkmk_checker(object):
             _vpnclient = [_vpnclient] if _vpnclient else []
         for _server in _vpnserver + _vpnclient:
             ## server_tls, p2p_shared_key p2p_tls
-            _server["name"] = _server.get("description") if _server.get("description").strip() else "OpenVPN_{protocoll}_{local_port}".format(**_server)
+            _server["name"] = _server.get("description").strip() if _server.get("description") else "OpenVPN_{protocoll}_{local_port}".format(**_server)
 
             _caref = _server.get("caref")
             _server_cert = self._get_certificate(_server.get("certref"))
@@ -740,29 +845,59 @@ class checkmk_checker(object):
 
     def checklocal_ipsec(self):
         _ret = []
+        _ipsec_config = self._config_reader().get("ipsec")
+        if type(_ipsec_config) != dict:
+            return []
+        _phase1config = _ipsec_config.get("phase1")
+        if type(_phase1config) != list:
+            _phase1config = [_phase1config]
         _json_data = self._run_prog("/usr/local/opnsense/scripts/ipsec/list_status.py")
         if len(_json_data.strip()) < 20:
             return []
-        for _con in json.loads(_json_data).values():
+        for _conid,_con in json.loads(_json_data).items():
+            _conid = _conid[3:]
+            try:
+                _config = next(filter(lambda x: x.get("ikeid") == _conid,_phase1config))
+            except StopIteration:
+                continue
             _childsas = None
             _con["status"] = 2
             _con["bytes_received"] = 0
             _con["bytes_sent"] = 0
+            _con["remote-host"] = "unknown"
             for _sas in _con.get("sas",[]):
                 _con["state"] = _sas.get("state","unknown")
+                if not _con["local-id"]:
+                    _con["status"] = 1
+                    _con["state"] = "ABANDOMED"
+                    _con["local-id"] = _sas.get("local-id")
+                if not _con["remote-id"]:
+                    _con["status"] = 1
+                    _con["remote-id"] = _sas.get("remote-id")
+                    _con["state"] = "ABANDOMED"
+
                 _childsas = filter(lambda x: x.get("state") == "INSTALLED",_sas.get("child-sas").values())
+                _con["remote-name"] = _config.get("descr",_con.get("remote-id"))
+
                 try:
                     _childsas = next(_childsas)
                     _con["remote-host"] = _sas.get("remote-host")
-                    _connecttime = int(_childsas.get("install-time",0))
+                    _connecttime = max(1,int(_childsas.get("install-time",0)))
                     _con["bytes_received"] = int(int(_childsas.get("bytes-in",0)) /_connecttime)
                     _con["bytes_sent"] = int(int(_childsas.get("bytes-out",0)) / _connecttime)
-                    _con["status"] = 0
+                    _con["life-time"] = int(_childsas.get("life-time",0))
+
+                    _con["status"] = 0 if _con["status"] == 2 else 1
                     break
                 except StopIteration:
                     pass
-            if _childsas:
-                _ret.append("{status} \"IPsec Tunnel: {remote-id}\" if_in_octets={bytes_received}|if_out_octets={bytes_sent} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
+            try:
+                if _childsas:
+                    _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes_received}|if_out_octets={bytes_sent}|lifetime={life-time} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
+                else:
+                    _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not connected {local-id} - {remote-id}({remote-host})".format(**_con))
+            except KeyError: ##fixme error melden
+                continue
         return _ret
 
     def checklocal_wireguard(self):
@@ -815,7 +950,7 @@ class checkmk_checker(object):
                         re.findall("total\.([\w.]+)=([\d.]+)",_output)
                 )
             )
-            _ret.append("0 \"Unbound DNS\" dns_successes={num_queries}|dns_recursion={num_recursivereplies}|dns_cachehits={num_cachehits}|dns_cachemiss={num_cachemiss}|avg_response_time={recursion_time_avg} Unbound running".format(**_unbound_stat))
+            _ret.append("0 \"Unbound DNS\" dns_successes={num_queries:.0f}|dns_recursion={num_recursivereplies:.0f}|dns_cachehits={num_cachehits:.0f}|dns_cachemiss={num_cachemiss:.0f}|avg_response_time={recursion_time_avg} Unbound running".format(**_unbound_stat))
         except:
             _ret.append("2 \"Unbound DNS\" dns_successes=0|dns_recursion=0|dns_cachehits=0|dns_cachemiss=0|avg_response_time=0 Unbound not running")
         return _ret
@@ -857,6 +992,40 @@ class checkmk_checker(object):
                     _ret.append("1 \"ACME Cert: {description}\" age=0 Status: pending".format(**_cert_info))
                 else:
                     _ret.append("2 \"ACME Cert: {description}\" age=0 Error Status: {statusCode}".format(**_cert_info))
+        return _ret
+
+    def _read_nginx_socket(self):
+        session = requests.Session()
+        session.mount("http://nginx/", NginxAdapter())
+        response = session.get("http://nginx/vts")
+        return response.json()
+
+    def checklocal_nginx(self):
+        _ret = []
+        _config = self._config_reader().get("OPNsense").get("Nginx")
+        if type(_config) != dict:
+            return []
+        _upstream_config = _config.get("upstream")
+        if type(_upstream_config) != list:
+            _upstream_config = [_upstream_config]
+
+        try:        
+            _data = self._read_nginx_socket()
+        except (requests.exceptions.ConnectionError,FileNotFoundError):
+            return [] ## no socket
+        for _serverzone,_serverzone_data in _data.get("serverZones",{}).items():
+            if _serverzone == "*":
+                continue
+            _serverzone_data["serverzone"] = _serverzone
+            _ret.append("0 \"Nginx Zone: {serverzone}\" bytesin={inBytes}|bytesout={outBytes} OK".format(**_serverzone_data))
+        for _upstream,_upstream_data in _data.get("upstreamZones",{}).items():
+            if _upstream.startswith("upstream"):
+                #_upstream_config_data["status"] = _upstream_data.get("")
+                _upstream_config_data = next(filter(lambda x: x.get("@uuid","").replace("-","") == _upstream[8:],_upstream_config))
+                #_upstream_data["upstream"] = _upstream_config_data.get("description",_upstream)
+                upstream=_upstream_config_data.get("description",_upstream)
+                _ret.append(f"0 \"Nginx Upstream: {upstream}\" - OK") ## fixme
+
         return _ret
 
     def check_haproxy(self):
@@ -1023,7 +1192,7 @@ class checkmk_checker(object):
         _ret.append(f"{_uptime_sec} {_idle_sec}")
         return _ret
 
-    def _run_prog(self,cmdline="",*args,shell=False,timeout=60):
+    def _run_prog(self,cmdline="",*args,shell=False,timeout=60,ignore_error=False):
         if type(cmdline) == str:
             _process = shlex.split(cmdline,posix=True)
         else:
@@ -1031,11 +1200,13 @@ class checkmk_checker(object):
         try:
             return subprocess.check_output(_process,encoding="utf-8",shell=shell,stderr=subprocess.DEVNULL,timeout=timeout)
         except subprocess.CalledProcessError as e:
+            if ignore_error:
+                return e.stdout
             return ""
         except subprocess.TimeoutExpired:
             return ""
 
-    def _run_cache_prog(self,cmdline="",cachetime=10,*args,shell=False):
+    def _run_cache_prog(self,cmdline="",cachetime=10,*args,shell=False,ignore_error=False):
         if type(cmdline) == str:
             _process = shlex.split(cmdline,posix=True)
         else:
@@ -1043,15 +1214,16 @@ class checkmk_checker(object):
         _process_id = "".join(_process)
         _runner = self._check_cache.get(_process_id)
         if _runner == None:
-            _runner = checkmk_cached_process(_process,shell=shell)
+            _runner = checkmk_cached_process(_process,shell=shell,ignore_error=ignore_error)
             self._check_cache[_process_id] = _runner
         return _runner.get(cachetime)
 
 class checkmk_cached_process(object):
-    def __init__(self,process,shell=False):
+    def __init__(self,process,shell=False,ignore_error=False):
         self._processs = process
         self._islocal = os.path.dirname(process[0]).startswith(LOCALDIR)
         self._shell = shell
+        self._ignore_error = ignore_error
         self._mutex = threading.Lock()
         with self._mutex:
             self._data = (0,"")
@@ -1061,7 +1233,10 @@ class checkmk_cached_process(object):
         try:
             _data = subprocess.check_output(self._processs,shell=self._shell,encoding="utf-8",stderr=subprocess.DEVNULL,timeout=timeout)
         except subprocess.CalledProcessError as e:
-            _data = ""
+            if self._ignore_error:
+                _data = e.stdout
+            else:
+                _data = ""
         except subprocess.TimeoutExpired:
             _data = ""
         with self._mutex:
@@ -1116,8 +1291,7 @@ class checkmk_server(TCPServer,checkmk_checker):
         return True
 
     def server_start(self):
-        sys.stderr.write("starting checkmk_agent\n")
-        sys.stderr.flush()
+        log("starting checkmk_agent\n")
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGHUP, self._signal_handler)
@@ -1137,11 +1311,10 @@ class checkmk_server(TCPServer,checkmk_checker):
 
     def _signal_handler(self,signum,*args):
         if signum in (signal.SIGTERM,signal.SIGINT):
-            sys.stderr.write("stopping checkmk_agent\n")
+            log("stopping checkmk_agent")
             threading.Thread(target=self.shutdown,name='shutdown').start()
             sys.exit(0)
-        sys.stderr.write("checkmk_agent running\n")
-        sys.stderr.flush()
+        log("checkmk_agent running")
 
     def daemonize(self):
         try:
@@ -1150,7 +1323,7 @@ class checkmk_server(TCPServer,checkmk_checker):
                 ## first parent
                 sys.exit(0)
         except OSError as e:
-            print("Fork failed")
+            log("err","Fork failed")
             sys.exit(1)
         os.chdir("/")
         os.setsid()
@@ -1161,13 +1334,13 @@ class checkmk_server(TCPServer,checkmk_checker):
                 ## second
                 sys.exit(0)
         except OSError as e:
-            print("Fork 2 failed")
+            log("err","Fork 2 failed")
             sys.exit(1)
         sys.stdout.flush()
         sys.stderr.flush()
         self._redirect_stream(sys.stdin,None)
         self._redirect_stream(sys.stdout,None)
-        #self._redirect_stream(sys.stderr,None)
+        self._redirect_stream(sys.stderr,None)
         with open(self.pidfile,"wt") as _pidfile:
             _pidfile.write(str(os.getpid()))
         os.chown(self.pidfile,self.user[2],self.user[3])
@@ -1355,18 +1528,18 @@ if __name__ == "__main__":
             except OSError:
                 pass
             else:
-                sys.stderr.write(f"allready running with pid {_pid}")
+                log("err",f"allready running with pid {_pid}")
                 sys.exit(1)
         _server.daemonize()
 
     elif args.status:
         if not _pid:
-            sys.stderr.write("Not running\n")
+            log("Not running\n")
         else:
             os.kill(int(_pid),signal.SIGHUP)
     elif args.stop:
         if not _pid:
-            sys.stderr.write("Not running\n")
+            log("Not running\n")
             sys.exit(1)
         os.kill(int(_pid),signal.SIGTERM)
 
@@ -1384,6 +1557,6 @@ if __name__ == "__main__":
             except OSError:
                 pass
             else:
-                sys.stderr.write(f"allready running with pid {_pid}")
+                log(f"allready running with pid {_pid}")
                 sys.exit(1)
         _server.daemonize()
