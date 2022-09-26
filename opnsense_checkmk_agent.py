@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.96"
+__VERSION__ = "0.98"
 
 import sys
 import os
@@ -456,6 +456,10 @@ class checkmk_checker(object):
                     _interface_dict["up"] = "true"
                 if _key == "flags":
                     _interface_dict["flags"] = int(re.findall("^[a-f\d]+",_val)[0],16)
+                    ## hack pppoe no status active or pppd pid
+                    if _interface.lower().startswith("pppoe") and _interface_dict["flags"] & 0x10 and  _interface_dict["flags"] & 0x1: 
+                        _interface_dict["up"] = "true"
+                    ## http://web.mit.edu/freebsd/head/sys/net/if.h
                     ## 0x1 UP
                     ## 0x2 BROADCAST
                     ## 0x8 LOOPBACK
@@ -810,6 +814,8 @@ class checkmk_checker(object):
 
         for _client in _monitored_clients.values():
             _current_conn = _client.get("current",[])
+            if _client.get("disable") == 1:
+                continue
             if not _client.get("description"):
                 _client["description"] = _client.get("common_name")
             _client["description"] = _client["description"].strip(" \r\n")
@@ -1097,6 +1103,33 @@ class checkmk_checker(object):
         _ret.append("ctxt {0}".format(_kernel.get("vm.stats.sys.v_swtch")))
         _sum = sum(map(lambda x: int(x[1]),(filter(lambda x: x[0] in ("vm.stats.vm.v_forks","vm.stats.vm.v_vforks","vm.stats.vm.v_rforks","vm.stats.vm.v_kthreads"),_kernel.items()))))
         _ret.append("processes {0}".format(_sum))
+        return _ret
+
+    def check_temperature(self):
+        _ret = ["<<<lnx_thermal:sep(124)>>>"]
+        _out = self._run_prog("sysctl dev.cpu",timeout=10)
+        _cpus = dict([_v.split(": ") for _v in _out.split("\n") if len(_v.split(": ")) == 2])
+        _cpu_temperatures = list(map(
+            lambda x: float(x[1].replace("C","")),
+            filter(
+                lambda x: x[0].endswith("temperature"),
+                _cpus.items()
+            )
+        ))
+        if _cpu_temperatures:
+            _cpu_temperature = int(max(_cpu_temperatures) * 1000)
+            _ret.append(f"CPU|enabled|unknown|{_cpu_temperature}")
+
+        _out = self._run_prog("sysctl -n hw.acpi.thermal.tz0.temperature",timeout=2)
+        if _out:
+            try:
+                _zone_temp = int(float(_out.replace("C","")) * 1000)
+            except ValueError:
+                _zone_temp = None
+            if _zone_temp:
+                _ret.append(f"thermal_zone0|enabled|unknown|{_zone_temp}")
+        if len(_ret) < 2:
+           return []
         return _ret
 
     def check_mem(self):
