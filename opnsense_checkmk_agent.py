@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.98"
+__VERSION__ = "0.99"
 
 import sys
 import os
@@ -794,7 +794,7 @@ class checkmk_checker(object):
                         _client = {
                             "server"         : _server.get("name"),
                             "common_name"    : _client_raw[0],
-                            "remote_ip"      : _client_raw[1].split(":")[0],
+                            "remote_ip"      : _client_raw[1].rsplit(":",1)[0], ## ipv6
                             "vpn_ip"         : _client_raw[2],
                             "vpn_ipv6"       : _client_raw[3],
                             "bytes_received" : int(_client_raw[4]),
@@ -934,7 +934,7 @@ class checkmk_checker(object):
             if not _client:
                 continue
             _client["interface"] = _values[0].strip()
-            _client["endpoint"]  = _values[3].strip().split(":")[0]
+            _client["endpoint"]  = _values[3].strip().rsplit(":",1)[0]
             _client["last_handshake"]  = int(_values[5].strip())
             _client["bytes_received"], _client["bytes_sent"]  = self._get_traffic("wireguard","",int(_values[6].strip()),int(_values[7].strip()))
             _client["status"] = 2 if _now - _client["last_handshake"] > 300 else 0  ## 5min timeout
@@ -1119,15 +1119,18 @@ class checkmk_checker(object):
         if _cpu_temperatures:
             _cpu_temperature = int(max(_cpu_temperatures) * 1000)
             _ret.append(f"CPU|enabled|unknown|{_cpu_temperature}")
-
-        _out = self._run_prog("sysctl -n hw.acpi.thermal.tz0.temperature",timeout=2)
-        if _out:
-            try:
-                _zone_temp = int(float(_out.replace("C","")) * 1000)
-            except ValueError:
-                _zone_temp = None
-            if _zone_temp:
-                _ret.append(f"thermal_zone0|enabled|unknown|{_zone_temp}")
+        
+        _count = 0
+        for _tempsensor in self._available_sysctl_temperature_list:
+            _out = self._run_prog(f"sysctl -n {_tempsensor}",timeout=2) #dev.pchtherm.0.temperature
+            if _out:
+                try:
+                    _zone_temp = int(float(_out.replace("C","")) * 1000)
+                except ValueError:
+                    _zone_temp = None
+                if _zone_temp:
+                    _ret.append(f"thermal_zone{_count}|enabled|unknown|{_zone_temp}")
+                    _count += 1
         if len(_ret) < 2:
            return []
         return _ret
@@ -1306,6 +1309,8 @@ class checkmk_server(TCPServer,checkmk_checker):
         self.pidfile = pidfile
         self.onlyfrom = onlyfrom.split(",") if onlyfrom else None
         self.skipcheck = skipcheck.split(",") if skipcheck else []
+        self._available_sysctl_list = self._run_prog("sysctl -aN").split()
+        self._available_sysctl_temperature_list = filter(lambda x: x.lower().find("temperature") > -1 and x.lower().find("cpu") == -1,self._available_sysctl_list)
         self.encryptionkey = encryptionkey
         self._mutex = threading.Lock()
         self.user = pwd.getpwnam(user)
