@@ -465,7 +465,7 @@ class checkmk_checker(object):
                     ## 0x800 SIMPLEX
                     ## 0x8000 MULTICAST
                 if _key == "media":
-                    _match = re.search("\((?P<speed>\d+G?)base(?:.*?<(?P<duplex>.*?)>)?",_val)
+                    _match = re.search("\((?P<speed>\d+G?)(?i)base(-{0,1})(?:.*?<(?P<duplex>.*?)>)?",_val)
                     if _match:
                         _interface_dict["speed"] = _match.group("speed").replace("G","000")
                         _interface_dict["duplex"] = _match.group("duplex")
