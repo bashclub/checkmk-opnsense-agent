@@ -571,7 +571,7 @@ class checkmk_checker(object):
         return _ret
 
     def check_dhcp(self):
-        if not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
+        if not os.path.exists("/var/dhcpd/var/db/dhcpd.leases") or not os.path.exists("/var/dhcpd/etc/dhcpd.conf"):
             return []
         _ret = ["<<<isc_dhcpd>>>"]
         _ret.append("[general]\nPID: {0}".format(self.pidof("dhcpd",-1)))
@@ -734,7 +734,7 @@ class checkmk_checker(object):
                     _server["expiredate"] = "\\n" + _server["expiredate"]
 
             _server["type"] = "server" if _server.get("local_port") else "client"
-            if _server.get("mode") in ("p2p_shared_key","p2p_tls"):
+            if _server.get("mode") in ("p2p_shared_key","p2p_tls") and _server.get("type") == "client":
                 _unix = "/var/etc/openvpn/{type}{vpnid}.sock".format(**_server)
                 try:
                     
