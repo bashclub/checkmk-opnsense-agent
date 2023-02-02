@@ -22,7 +22,7 @@
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
 
-__VERSION__ = "0.99"
+__VERSION__ = "0.99.2"
 
 import sys
 import os
@@ -146,6 +146,8 @@ class checkmk_handler(StreamRequestHandler):
                 pass
 
 class checkmk_checker(object):
+    _available_sysctl_list = []
+    _available_sysctl_temperature_list = []
     _certificate_timestamp = 0
     _check_cache = {}
     _datastore_mutex = threading.RLock()
@@ -447,17 +449,19 @@ class checkmk_checker(object):
             _interface_dict["systime"] = _now
             for _key, _val in re.findall("^\s*(\w+)[:\s=]+(.*?)$",_data,re.MULTILINE):
                 if _key == "description":
-                    _interface_dict["interface_name"] = _val.strip().replace(" ","_")
+                   _interface_dict["interface_name"] = re.sub("_\((lan|wan|opt\d)\)","",_val.strip().replace(" ","_"))
                 if _key == "groups":
                     _interface_dict["groups"] = _val.strip().split()
                 if _key == "ether":
                     _interface_dict["phys_address"] = _val.strip()
                 if _key == "status" and _val.strip() == "active":
                     _interface_dict["up"] = "true"
+                if _interface.startswith("wg") and _interface_dict.get("flags",0) & 0x01:
+                    _interface_dict["up"] = "true"
                 if _key == "flags":
                     _interface_dict["flags"] = int(re.findall("^[a-f\d]+",_val)[0],16)
                     ## hack pppoe no status active or pppd pid
-                    if _interface.lower().startswith("pppoe") and _interface_dict["flags"] & 0x10 and  _interface_dict["flags"] & 0x1: 
+                    if _interface.lower().startswith("pppoe") and _interface_dict["flags"] & 0x10 and _interface_dict["flags"] & 0x1: 
                         _interface_dict["up"] = "true"
                     ## http://web.mit.edu/freebsd/head/sys/net/if.h
                     ## 0x1 UP
@@ -516,7 +520,7 @@ class checkmk_checker(object):
                     except ValueError:
                         pass
 
-            if _interface_dict["flags"] & 0x2 or _interface_dict["flags"] & 0x10: ## nur broadcast oder ptp
+            if _interface_dict["flags"] & 0x2 or _interface_dict["flags"] & 0x10 or _interface_dict["flags"] & 0x80: ## nur broadcast oder ptp
                 self._all_interfaces[_interface] = _interface_dict
             else:
                 continue
@@ -1122,14 +1126,17 @@ class checkmk_checker(object):
         
         _count = 0
         for _tempsensor in self._available_sysctl_temperature_list:
-            _out = self._run_prog(f"sysctl -n {_tempsensor}",timeout=2) #dev.pchtherm.0.temperature
+            _out = self._run_prog(f"sysctl -n {_tempsensor}",timeout=10)
             if _out:
                 try:
                     _zone_temp = int(float(_out.replace("C","")) * 1000)
                 except ValueError:
                     _zone_temp = None
                 if _zone_temp:
-                    _ret.append(f"thermal_zone{_count}|enabled|unknown|{_zone_temp}")
+                    if _tempsensor.find(".pchtherm.") > -1:
+                        _ret.append(f"thermal_zone{_count}|enabled|unknown|{_zone_temp}|111000|critical|108000|passive")
+                    else:
+                        _ret.append(f"thermal_zone{_count}|enabled|unknown|{_zone_temp}")
                     _count += 1
         if len(_ret) < 2:
            return []
@@ -1310,7 +1317,7 @@ class checkmk_server(TCPServer,checkmk_checker):
         self.onlyfrom = onlyfrom.split(",") if onlyfrom else None
         self.skipcheck = skipcheck.split(",") if skipcheck else []
         self._available_sysctl_list = self._run_prog("sysctl -aN").split()
-        self._available_sysctl_temperature_list = filter(lambda x: x.lower().find("temperature") > -1 and x.lower().find("cpu") == -1,self._available_sysctl_list)
+        self._available_sysctl_temperature_list = list(filter(lambda x: x.lower().find("temperature") > -1 and x.lower().find("cpu") == -1,self._available_sysctl_list))
         self.encryptionkey = encryptionkey
         self._mutex = threading.Lock()
         self.user = pwd.getpwnam(user)
