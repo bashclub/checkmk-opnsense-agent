@@ -449,7 +449,7 @@ class checkmk_checker(object):
             _interface_dict["systime"] = _now
             for _key, _val in re.findall("^\s*(\w+)[:\s=]+(.*?)$",_data,re.MULTILINE):
                 if _key == "description":
-                   _interface_dict["interface_name"] = re.sub("_\((lan|wan|opt\d)\)","",_val.strip().replace(" ","_"))
+                   _interface_dict["interface_name"] = re.sub("_\((lan|wan|opt\d+)\)","",_val.strip().replace(" ","_"))
                 if _key == "groups":
                     _interface_dict["groups"] = _val.strip().split()
                 if _key == "ether":
