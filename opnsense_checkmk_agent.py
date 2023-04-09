@@ -1702,8 +1702,8 @@ if __name__ == "__main__":
 
     if SYSHOOK_METHOD and any(_active_methods) == False:
         setattr(args,SYSHOOK_METHOD[0],True)
-    pprint(args.__dict__)
-    pprint(_pid)
+    #pprint(args.__dict__)
+    #pprint(_pid)
     if args.start:
         if _pid > 0:
             try:
