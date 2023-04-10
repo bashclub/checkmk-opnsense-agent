@@ -21,6 +21,8 @@
 ## to install
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
+##  default config file /usr/local/checkmk_agent/etc/checkmk.conf
+##
 ## for server-side implementation of 
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
@@ -63,7 +65,7 @@ SCRIPTPATH = os.path.abspath(__file__)
 SYSHOOK_METHOD = re.findall("rc\.syshook\.d\/(start|stop)/",SCRIPTPATH)
 BASEDIR = "/usr/local/checkmk_agent"
 MK_CONFDIR = os.path.join(BASEDIR,"etc")
-CHECKMK_CONFIG = os.path.join(MK_CONFDIR,"checkmk.conf")
+CHECKMK_CONFIG = "/usr/local/etc/checkmk.conf"
 LOCALDIR = os.path.join(BASEDIR,"local")
 PLUGINSDIR = os.path.join(BASEDIR,"plugins")
 SPOOLDIR = os.path.join(BASEDIR,"spool")
@@ -1642,7 +1644,7 @@ if __name__ == "__main__":
             "\n", 
         formatter_class=SmartFormatter,
         epilog=f"""
-        The CHECKMK_BASEDIR is under {BASEDIR} (etc,local,plugin,spool). 
+        The CHECKMK_BASEDIR is under {BASEDIR} (local,plugin,spool). 
         Default config file location is {CHECKMK_CONFIG}, create it if it doesn't exist.
         Config file options port,encrypt,onlyfrom,skipcheck with a colon and the value like the commandline option
         """
