@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 # vim: set fileencoding=utf-8:noet
 
-##  Copyright 2023 Bashclub https://github.com/bashclub
+##  Copyright 2022 Bashclub
 ##  BSD-2-Clause
 ##
 ##  Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
@@ -21,13 +21,8 @@
 ## to install
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
-##  default config file /usr/local/checkmk_agent/etc/checkmk.conf
-##
-## for server-side implementation of 
-##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
-##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "0.99.9"
+__VERSION__ = "0.99.2"
 
 import sys
 import os
@@ -55,19 +50,18 @@ from cryptography.hazmat.backends import default_backend as crypto_default_backe
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from datetime import datetime
 from xml.etree import cElementTree as ELementTree
 from collections import Counter,defaultdict
 from pprint import pprint
 from socketserver import TCPServer,StreamRequestHandler
 
-SCRIPTPATH = os.path.abspath(__file__)
-SYSHOOK_METHOD = re.findall("rc\.syshook\.d\/(start|stop)/",SCRIPTPATH)
-BASEDIR = "/usr/local/checkmk_agent"
+SCRIPTPATH = os.path.abspath(os.path.basename(__file__))
+if os.path.islink(SCRIPTPATH):
+    SCRIPTPATH = os.path.realpath(os.readlink(SCRIPTPATH))
+BASEDIR = "/usr/local"
 MK_CONFDIR = os.path.join(BASEDIR,"etc")
-CHECKMK_CONFIG = "/usr/local/etc/checkmk.conf"
+CHECKMK_CONFIG = os.path.join(MK_CONFDIR,"checkmk.conf")
 LOCALDIR = os.path.join(BASEDIR,"local")
-PLUGINSDIR = os.path.join(BASEDIR,"plugins")
 SPOOLDIR = os.path.join(BASEDIR,"spool")
 
 class object_dict(defaultdict):
@@ -105,6 +99,7 @@ def log(message,prio="notice"):
     syslog.openlog(ident="checkmk_agent",logoption=syslog.LOG_PID | syslog.LOG_NDELAY,facility=syslog.LOG_DAEMON)
     syslog.syslog(priority,message)
 
+
 def pad_pkcs7(message,size=16):
     _pad = size - (len(message) % size)
     if type(message) == str:
@@ -128,6 +123,7 @@ class NginxConnectionPool(HTTPConnectionPool):
 class NginxAdapter(HTTPAdapter):
     def get_connection(self, url, proxies=None):
         return NginxConnectionPool()
+
 
 def check_pid(pid):
     try:
@@ -182,6 +178,12 @@ class checkmk_checker(object):
         _encrypted_message = _encryptor.update(message) + _encryptor.finalize()
         return pad_pkcs7(b"03",10) + SALT + _encrypted_message
 
+    def _encrypt(self,message): ## openssl ## todo ## remove
+        _cmd = shlex.split('openssl enc -aes-256-cbc -md sha256 -iter 10000 -k "secretpassword"',posix=True)
+        _proc = subprocess.Popen(_cmd,stderr=subprocess.DEVNULL,stdout=subprocess.PIPE,stdin=subprocess.PIPE)
+        _out,_err = _proc.communicate(input=message.encode("utf-8"))
+        return b"03" + _out
+
     def do_checks(self,debug=False,remote_ip=None,**kwargs):
         self._getosinfo()
         _errors = []
@@ -194,7 +196,6 @@ class checkmk_checker(object):
             _lines.append("OnlyFrom: {0}".format(",".join(self.onlyfrom)))
 
         _lines.append(f"LocalDirectory: {LOCALDIR}")
-        _lines.append(f"PluginsDirectory: {PLUGINSDIR}")
         _lines.append(f"AgentDirectory: {MK_CONFDIR}")
         _lines.append(f"SpoolDirectory: {SPOOLDIR}")
 
@@ -208,18 +209,6 @@ class checkmk_checker(object):
                 except:
                     _failed_sections.append(_name)
                     _errors.append(traceback.format_exc())
-
-        if os.path.isdir(PLUGINSDIR):
-            for _plugin_file in glob.glob(f"{PLUGINSDIR}/**",recursive=True):
-                if os.path.isfile(_plugin_file) and os.access(_plugin_file,os.X_OK):
-                    try:
-                        _cachetime = int(_plugin_file.split(os.path.sep)[-2])
-                    except:
-                        _cachetime = 0
-                    try:
-                        _lines.append(self._run_cache_prog(_plugin_file,_cachetime))
-                    except:
-                        _errors.append(traceback.format_exc())
 
         _lines.append("<<<local:sep(0)>>>")
         for _check in dir(self):
@@ -270,27 +259,6 @@ class checkmk_checker(object):
             return self.encrypt("\n".join(_lines),password=self.encryptionkey)
         return "\n".join(_lines).encode("utf-8")
 
-    def do_zabbix_output(self):
-        self._getosinfo()
-        _regex_convert = re.compile("^(?P<status>[0-3P])\s(?P<servicename>\".*?\"|\w+)\s(?P<metrics>[\w=.;|]+| -)\s(?P<details>.*)")
-        _json = []
-        for _check in dir(self):
-            if _check.startswith("checklocal_"):
-                _name = _check.split("_",1)[1]
-                if _name in self.skipcheck:
-                    continue
-                try:
-                    for _line in getattr(self,_check)():
-                        try:
-                            _entry = _regex_convert.search(_line).groupdict()
-                            _entry["servicename"] = _entry["servicename"].strip('"')
-                            _json.append(_entry)
-                        except:
-                            raise
-                except:
-                    raise
-        return json.dumps(_json)
-
     def _get_storedata(self,section,key):
         with self._datastore_mutex:
             return self._datastore.get(section,{}).get(key)
@@ -305,16 +273,13 @@ class checkmk_checker(object):
         _changelog = json.load(open("/usr/local/opnsense/changelog/index.json","r"))
         _config_modified = os.stat("/conf/config.xml").st_mtime
         try:
-            _default_version = {'series': _info.get("product_series"), 'version': _info.get("product_version"), 'date': time.strftime('%B %d, %Y')}
-            _latest_series = dict(map(lambda x: (x.get("series"),x),_changelog))
-            _latest_versions = dict(map(lambda x: (x.get("version"),x),_changelog))
-            _latest_firmware = _latest_series.get(_info.get("product_series"),_default_version)
-            _current_firmware = _latest_versions.get(_info.get("product_version").split("_")[0],_default_version).copy()
+            _latest_firmware = list(filter(lambda x: x.get("series") == _info.get("product_series"),_changelog))[-1]
+            _current_firmware = list(filter(lambda x: x.get("version") == _info.get("product_version").split("_")[0],_changelog))[0].copy() ## not same
             _current_firmware["age"] = int(time.time() - time.mktime(time.strptime(_current_firmware.get("date"),"%B %d, %Y")))
             _current_firmware["version"] = _info.get("product_version")
         except:
-            #raise
-            _latest_firmware = {}
+            raise
+            _lastest_firmware = {}
             _current_firmware = {}
         try:
             _upgrade_json = json.load(open("/tmp/pkg_upgrade.json","r"))
@@ -326,17 +291,15 @@ class checkmk_checker(object):
             _latest_firmware["version"] = _current_firmware["version"] ## fixme ## no upgradepckg error on opnsense ... no new version
         self._info = {
             "os"                : _info.get("product_name"),
-            "os_version"        : _current_firmware.get("version","unknown"),
+            "os_version"        : _current_firmware.get("version"),
             "version_age"       : _current_firmware.get("age",0),
             "config_age"        : int(time.time() - _config_modified) ,
             "last_configchange" : time.strftime("%H:%M %d.%m.%Y",time.localtime(_config_modified)),
             "product_series"    : _info.get("product_series"),
-            "latest_version"    : _latest_firmware.get("version","unknown"),
-            "latest_date"       : _latest_firmware.get("date",""),
+            "latest_version"    : _latest_firmware.get("version"),
+            "latest_date"       : _latest_firmware.get("date"),
             "hostname"          : self._run_prog("hostname").strip(" \n")
         }
-        if os.path.exists("/usr/local/opnsense/version/core.license"):
-            self._info["business_expire"] = datetime.strptime(json.load(open("/usr/local/opnsense/version/core.license","r")).get("valid_to","2000-01-01"),"%Y-%m-%d")
 
     @staticmethod
     def ip2int(ipaddr):
@@ -404,8 +367,21 @@ class checkmk_checker(object):
         except:
             return {}
 
+    def _get_opnsense_ipaddr(self):
+        RE_IPDATA = re.compile("(?P<inet>inet6?)\s(?P<ip>[\da-f:.]+)\/(?P<cidr>\d+).*?(?:vhid\s(?P<vhid>\d+)|$)|carp:\s(?P<carp_status>MASTER|BACKUP)\svhid\s(?P<carp_vhid>\d+)\sadvbase\s(?P<carp_base>\d+)\sadvskew\s(?P<carp_skew>\d)|(vlan):\s(?P<vlan>\d*)",re.DOTALL | re.M)
+        try:
+            _ret = {}
+            for _if,_data in re.findall("([\w_]+):\s(.*?)\n(?=(?:\w|$))",self._run_prog("ifconfig -f inet:cidr,inet6:cidr"),re.DOTALL | re.M):
+                _ret[_if] = RE_IPDATA.search(_data).groups()
+            return _ret
+        except:
+            return {}
+
+
     def get_opnsense_interfaces(self):
         _ifs = {}
+        #pprint(self._config_reader().get("interfaces"))
+        #sys.exit(0)
         for _name,_interface in self._config_reader().get("interfaces",{}).items():
             if _interface.get("enable") != "1":
                 continue
@@ -432,13 +408,6 @@ class checkmk_checker(object):
         if self._info.get("os_version") != self._info.get("latest_version"):
             return ["1 Firmware update_available=1|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**self._info)]
         return ["0 Firmware update_available=0|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f} Version {os_version}  Config changed: {last_configchange}".format(**self._info)]
-
-    def checklocal_business(self):
-        if self._info.get("business_expire"):
-            _days = (self._info.get("business_expire") - datetime.now()).days
-            _date = self._info.get("business_expire").strftime("%d.%m.%Y")
-            return [f'P "Business Licence" expiredays={_days};;;30;60; Licence Expire: {_date}']
-        return []
 
     def check_label(self):
         _ret = ["<<<labels:sep(0)>>>"]
@@ -480,7 +449,7 @@ class checkmk_checker(object):
             _interface_dict["systime"] = _now
             for _key, _val in re.findall("^\s*(\w+)[:\s=]+(.*?)$",_data,re.MULTILINE):
                 if _key == "description":
-                    _interface_dict["interface_name"] = re.sub("_\((lan|wan|opt\d+)\)$","",_val.strip().replace(" ","_"))
+                   _interface_dict["interface_name"] = re.sub("_\((lan|wan|opt\d)\)","",_val.strip().replace(" ","_"))
                 if _key == "groups":
                     _interface_dict["groups"] = _val.strip().split()
                 if _key == "ether":
@@ -492,7 +461,7 @@ class checkmk_checker(object):
                 if _key == "flags":
                     _interface_dict["flags"] = int(re.findall("^[a-f\d]+",_val)[0],16)
                     ## hack pppoe no status active or pppd pid
-                    if _interface.lower().startswith("pppoe") and _interface_dict["flags"] & 0x10 and  _interface_dict["flags"] & 0x1: 
+                    if _interface.lower().startswith("pppoe") and _interface_dict["flags"] & 0x10 and _interface_dict["flags"] & 0x1: 
                         _interface_dict["up"] = "true"
                     ## http://web.mit.edu/freebsd/head/sys/net/if.h
                     ## 0x1 UP
@@ -504,7 +473,7 @@ class checkmk_checker(object):
                     ## 0x800 SIMPLEX
                     ## 0x8000 MULTICAST
                 if _key == "media":
-                    _match = re.search("\((?P<speed>\d+G?)[Bb]ase(?:.*?<(?P<duplex>.*?)>)?",_val)
+                    _match = re.search("\((?P<speed>\d+G?)base(?:.*?<(?P<duplex>.*?)>)?",_val)
                     if _match:
                         _interface_dict["speed"] = _match.group("speed").replace("G","000")
                         _interface_dict["duplex"] = _match.group("duplex")
@@ -551,7 +520,7 @@ class checkmk_checker(object):
                     except ValueError:
                         pass
 
-            if _interface_dict["flags"] & 0x2 or _interface_dict["flags"] & 0x10 or _interface_dict["flags"] & 0x80: ## nur broadcast oder ptp .. und noarp
+            if _interface_dict["flags"] & 0x2 or _interface_dict["flags"] & 0x10 or _interface_dict["flags"] & 0x80: ## nur broadcast oder ptp
                 self._all_interfaces[_interface] = _interface_dict
             else:
                 continue
@@ -562,8 +531,7 @@ class checkmk_checker(object):
             for _key,_val in _interface_dict.items():
                 if _key in ("mtu","ipackets","ierror","idrop","rx","opackets","oerror","tx","collisions","drop","interface_name","up","systime","phys_address","speed","duplex"):
                     if type(_val) in (str,int,float):
-                        _sanitized_interface = _interface.replace(".","_")
-                        _ret.append(f"{_sanitized_interface}.{_key} {_val}")
+                        _ret.append(f"{_interface}.{_key} {_val}")
 
         return _ret
 
@@ -640,20 +608,6 @@ class checkmk_checker(object):
             _ret.append(_ip)
         return _ret
 
-    def check_squid(self):
-        _squid_config = self._config_reader().get("OPNsense",{}).get("proxy",{})
-        if _squid_config.get("general",{}).get("enabled") != "1":
-            return []
-        _ret = ["<<<squid>>>"]
-        _port = _squid_config.get("forward",{}).get("port","3128")
-        try:
-            _response = requests.get(f"http://127.0.0.1:{_port}/squid-internal-mgr/5min",timeout=0.2)
-            if _response.status_code == 200:
-                _ret += _response.text.split("\n")
-        except:
-            pass
-        return _ret
-
     def checklocal_pkgaudit(self):
         try:
             _data = json.loads(self._run_cache_prog("pkg audit -F --raw=json-compact -q",cachetime=360,ignore_error=True))
@@ -665,6 +619,7 @@ class checkmk_checker(object):
         except:
             pass
         return ["0 Audit issues=0 OK"]
+
 
     @staticmethod
     def _read_from_openvpnsocket(vpnsocket,cmd):
@@ -859,7 +814,7 @@ class checkmk_checker(object):
                     _server["clientcount"] = _number_of_clients
                     _ret.append('{status} "OpenVPN Server: {name}" connections_ssl_vpn={clientcount};;{maxclients}|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {clientcount}/{maxclients} Connections Port:{local_port}/{protocol} {expiredate}'.format(**_server))
                 except:
-                    _ret.append('2 "OpenVPN Server: {name}" connections_ssl_vpn=0;;{maxclients}|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:{local_port}/{protocol} {expiredate}'.format(**_server))
+                    _ret.append('2 "OpenVPN Server: {name}" connections_ssl_vpn=0;;{maxclients}|expiredays={expiredays}|if_in_octets=0|if_out_octets=0| Server down Port:{local_port}/{protocol} {expiredate}'.format(**_server))
 
         for _client in _monitored_clients.values():
             _current_conn = _client.get("current",[])
@@ -899,73 +854,60 @@ class checkmk_checker(object):
         return _ret
 
     def checklocal_ipsec(self):
-        _ret =[]
+        _ret = []
         _ipsec_config = self._config_reader().get("ipsec")
         if type(_ipsec_config) != dict:
             return []
         _phase1config = _ipsec_config.get("phase1")
-        _phase2config = _ipsec_config.get("phase2")
         if type(_phase1config) != list:
             _phase1config = [_phase1config]
-        if type(_phase2config) != list:
-            _phase2config = [_phase2config]
         _json_data = self._run_prog("/usr/local/opnsense/scripts/ipsec/list_status.py")
-        if len(_json_data.strip()) > 20:
-            _json_data = json.loads(_json_data)
-        else:
-            _json_data = {}
-        for _phase1 in _phase1config:
-            _ikeid = _phase1.get("ikeid")
-            _name = _phase1.get("descr")
-            if len(_name.strip()) < 1:
-                _name = _phase1.get("remote-gateway")
-            _condata = _json_data.get(f"con{_ikeid}",{})
-            _con = {
-                "status"            : 2,
-                "bytes-received"    : 0,
-                "bytes-sent"        : 0,
-                "life-time"         : 0,
-                "state"             : "unknown",
-                "remote-host"       : "unknown",
-                "remote-name"       : _name,
-                "local-id"          : _condata.get("local-id"),
-                "remote-id"         : _condata.get("remote-id")
-            }
-            _phase2_up = 0
-            for _sas in _condata.get("sas",[]):
-                _con["state"] = _sas.get("state")
-                _con["local-id"] = _sas.get("local-id")
-                _con["remote-id"] = _sas.get("remote-id")
+        if len(_json_data.strip()) < 20:
+            return []
+        for _conid,_con in json.loads(_json_data).items():
+            _conid = _conid[3:]
+            try:
+                _config = next(filter(lambda x: x.get("ikeid") == _conid,_phase1config))
+            except StopIteration:
+                continue
+            _childsas = None
+            _con["status"] = 2
+            _con["bytes_received"] = 0
+            _con["bytes_sent"] = 0
+            _con["remote-host"] = "unknown"
+            for _sas in _con.get("sas",[]):
+                _con["state"] = _sas.get("state","unknown")
+                if not _con["local-id"]:
+                    _con["status"] = 1
+                    _con["state"] = "ABANDOMED"
+                    _con["local-id"] = _sas.get("local-id")
+                if not _con["remote-id"]:
+                    _con["status"] = 1
+                    _con["remote-id"] = _sas.get("remote-id")
+                    _con["state"] = "ABANDOMED"
 
-                _sas_installed = False
-                if _sas.get("state") != "ESTABLISHED":
-                    continue
-                _con["remote-host"] = _sas.get("remote-host")
-                for _child in _sas.get("child-sas",{}).values():
-                    if _child.get("state") != "INSTALLED":
-                        continue
-                    _sas_installed = True
-                    _install_time = max(1,int(_child.get("install-time","1")))
-                    _con["bytes-received"] += int(int(_child.get("bytes-in","0")) /_install_time)
-                    _con["bytes-sent"] += int(int(_child.get("bytes-out","0")) /_install_time)
-                    _con["life-time"] = max(_con["life-time"],_install_time)
-                    _con["status"] = 0 if _con["status"] != 1 else 1
-                if _sas_installed:
-                    _phase2_up += 1
+                _childsas = filter(lambda x: x.get("state") == "INSTALLED",_sas.get("child-sas").values())
+                _con["remote-name"] = _config.get("descr",_con.get("remote-id"))
 
-            _required_phase2 = len(list(filter(lambda x: x.get("ikeid") == _ikeid,_phase2config)))
+                try:
+                    _childsas = next(_childsas)
+                    _con["remote-host"] = _sas.get("remote-host")
+                    _connecttime = max(1,int(_childsas.get("install-time",0)))
+                    _con["bytes_received"] = int(int(_childsas.get("bytes-in",0)) /_connecttime)
+                    _con["bytes_sent"] = int(int(_childsas.get("bytes-out",0)) / _connecttime)
+                    _con["life-time"] = int(_childsas.get("life-time",0))
 
-            if _phase2_up == _required_phase2:
-                _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
-            elif _phase2_up == 0:
-                if _condata.keys():
-                    _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not connected {local-id} - {remote-id}({remote-host})".format(**_con))
+                    _con["status"] = 0 if _con["status"] == 2 else 1
+                    break
+                except StopIteration:
+                    pass
+            try:
+                if _childsas:
+                    _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes_received}|if_out_octets={bytes_sent}|lifetime={life-time} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
                 else:
-                    _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not running".format(**_con))
-            else:
-                _con["status"] = max(_con["status"],1)
-                _con["phase2"] = f"{_phase2_up}/{_required_phase2}"
-                _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {phase2} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
+                    _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not connected {local-id} - {remote-id}({remote-host})".format(**_con))
+            except KeyError: ##fixme error melden
+                continue
         return _ret
 
     def checklocal_wireguard(self):
@@ -1073,65 +1015,27 @@ class checkmk_checker(object):
         _config = self._config_reader().get("OPNsense").get("Nginx")
         if type(_config) != dict:
             return []
-        if _config.get("general",{}).get("enabled") != "1":
-            return []
+        _upstream_config = _config.get("upstream")
+        if type(_upstream_config) != list:
+            _upstream_config = [_upstream_config]
 
         try:        
             _data = self._read_nginx_socket()
         except (requests.exceptions.ConnectionError,FileNotFoundError):
-            _data = {}
-            pass ## no socket
-
-        _uptime = _data.get("loadMsec",0)/1000
-        if _uptime > 0:
-            _starttime = datetime.fromtimestamp(_uptime).strftime("%d.%m.%Y %H:%M")
-            _uptime = time.time() - _uptime
-            _ret.append(f"0 \"Nginx Uptime\" uptime={_uptime} Up since {_starttime}")
-        else:
-            _ret.append("2 \"Nginx Uptime\" uptime=0 Down")
-
-        _upstream_config = _config.get("upstream")
-        _location_config = _config.get("location")
-        if type(_upstream_config) != list:
-            _upstream_config = [_upstream_config] if _upstream_config else []
-        _upstream_config = dict(map(lambda x: (x.get("@uuid"),x),_upstream_config))
-        if type(_location_config) != list:
-            _location_config = [_location_config] if _location_config else []
-
-        _upstream_data = _data.get("upstreamZones",{})
-        
-        for _location in _location_config:
-            _upstream = _upstream_config.get(_location.get("upstream","__"))
-            _location["upstream_name"] = ""
-            if _upstream:
-                _location["upstream_name"] = _upstream.get("description")
-                _uuid = "upstream{0}".format(_upstream.get("@uuid","").replace("-",""))
-                _upstream_info = _upstream_data.get(_uuid)
-                if not _upstream_info:
-                    _ret.append("1 \"Nginx Location: {description}\" connections=0|if_in_octets=0|if_out_octets=0 Upstream: {upstream_name} no Data".format(**_location))
-                    continue
-            else:
-                _ret.append("1 \"Nginx Location: {description}\" connections=0|if_in_octets=0|if_out_octets=0 No Upstream".format(**_location))
+            return [] ## no socket
+        for _serverzone,_serverzone_data in _data.get("serverZones",{}).items():
+            if _serverzone == "*":
                 continue
-            _location["requestCounter"] = 0
-            _location["inBytes"] = 0
-            _location["outBytes"] = 0
-            _isup = 0
-            for _server in _upstream_info:
-                if _server.get("down") == False:
-                    _isup +=1
-                for _key in ("requestCounter","inBytes","outBytes"):
-                    _location[_key] += _server.get(_key,0)
+            _serverzone_data["serverzone"] = _serverzone
+            _ret.append("0 \"Nginx Zone: {serverzone}\" bytesin={inBytes}|bytesout={outBytes} OK".format(**_serverzone_data))
+        for _upstream,_upstream_data in _data.get("upstreamZones",{}).items():
+            if _upstream.startswith("upstream"):
+                #_upstream_config_data["status"] = _upstream_data.get("")
+                _upstream_config_data = next(filter(lambda x: x.get("@uuid","").replace("-","") == _upstream[8:],_upstream_config))
+                #_upstream_data["upstream"] = _upstream_config_data.get("description",_upstream)
+                upstream=_upstream_config_data.get("description",_upstream)
+                _ret.append(f"0 \"Nginx Upstream: {upstream}\" - OK") ## fixme
 
-            if _isup > 0:
-                _available_upstreams = len(_upstream_info)
-                _location["available_upstream"] = "{0}/{1}".format(_isup,_available_upstreams)
-                if _available_upstreams == _isup:
-                    _ret.append("0 \"Nginx Location: {description}\" connections={requestCounter}|if_in_octets={inBytes}|if_out_octets={outBytes} Upstream: {upstream_name} OK".format(**_location))
-                else:
-                    _ret.append("1 \"Nginx Location: {description}\" connections={requestCounter}|if_in_octets={inBytes}|if_out_octets={outBytes} Upstream: {upstream_name} {available_upstream} OK".format(**_location))
-            else:
-                _ret.append("2 \"Nginx Location: {description}\" connections={requestCounter}|if_in_octets={inBytes}|if_out_octets={outBytes} Upstream: {upstream_name} down".format(**_location))
         return _ret
 
     def check_haproxy(self):
@@ -1189,27 +1093,9 @@ class checkmk_checker(object):
         _ret += re.findall("^(?!.*\sna\s.*$).*",_out,re.M)
         return _ret
 
-    def check_apcupsd(self):
-        if self._config_reader().get("OPNsense",{}).get("apcupsd",{}).get("general",{}).get("Enabled") != "1":
-            return []
-        _ret = ["<<<apcaccess:sep(58)>>>"]
-        _ret.append("[[apcupsd.conf]]")
-        _ret.append(self._run_prog("apcaccess").strip())
-        return _ret
-
     def check_df(self):
         _ret = ["<<<df>>>"]
         _ret += self._run_prog("df -kTP -t ufs").split("\n")[1:]
-        return _ret
-
-    def check_ssh(self):
-        if self._config_reader().get("system",{}).get("ssh",{}).get("enabled") != "enabled":
-            return []
-        _ret = ["<<<sshd_config>>>"]
-        with open("/usr/local/etc/ssh/sshd_config","r") as _f:
-            for _line in _f.readlines():
-                if re.search("^[a-zA-Z]",_line):
-                    _ret.append(_line.replace("\n",""))
         return _ret
 
     def check_kernel(self):
@@ -1274,6 +1160,7 @@ class checkmk_checker(object):
         _ret.append("swap.free 0")
         _ret.append("swap.total 0")
         _ret.append("swap.used 0")
+        
         return _ret
 
     def check_zpool(self):
@@ -1323,6 +1210,7 @@ class checkmk_checker(object):
             if _line.strip():
                 _ret.append("{0} {1}".format(_line[0],_line[1:]))
         return _ret
+        
 
     def check_tcp(self):
         _ret = ["<<<tcp_conn_stats>>>"]
@@ -1338,6 +1226,7 @@ class checkmk_checker(object):
         for _line in re.finditer("^(?P<stat>\w+)\s+(?P<user>\w+)\s+(?P<vsz>\d+)\s+(?P<rss>\d+)\s+(?P<cpu>[\d.]+)\s+(?P<command>.*)$",_out,re.M):
             _ret.append("({user},{vsz},{rss},{cpu}) {command}".format(**_line.groupdict()))
         return _ret
+        
 
     def check_uptime(self):
         _ret = ["<<<uptime>>>"]
@@ -1423,7 +1312,7 @@ class checkmk_cached_process(object):
         return _data
 
 class checkmk_server(TCPServer,checkmk_checker):
-    def __init__(self,port,pidfile,onlyfrom=None,encryptionkey=None,skipcheck=None,**kwargs):
+    def __init__(self,port,pidfile,user,onlyfrom=None,encryptionkey=None,skipcheck=None,**kwargs):
         self.pidfile = pidfile
         self.onlyfrom = onlyfrom.split(",") if onlyfrom else None
         self.skipcheck = skipcheck.split(",") if skipcheck else []
@@ -1431,15 +1320,9 @@ class checkmk_server(TCPServer,checkmk_checker):
         self._available_sysctl_temperature_list = list(filter(lambda x: x.lower().find("temperature") > -1 and x.lower().find("cpu") == -1,self._available_sysctl_list))
         self.encryptionkey = encryptionkey
         self._mutex = threading.Lock()
-        self.user = pwd.getpwnam("root")
+        self.user = pwd.getpwnam(user)
         self.allow_reuse_address = True
         TCPServer.__init__(self,("",port),checkmk_handler,bind_and_activate=False)
-
-    def verify_request(self, request, client_address):
-        if self.onlyfrom and client_address[0] not in self.onlyfrom:
-            log("Client {0} not allowed".format(*client_address),"warn")
-            return False
-        return True
 
     def _change_user(self):
         _, _, _uid, _gid, _, _, _ = self.user
@@ -1447,9 +1330,13 @@ class checkmk_server(TCPServer,checkmk_checker):
             os.setgid(_gid)
             os.setuid(_uid)
 
+    def verify_request(self, request, client_address):
+        if self.onlyfrom and client_address[0] not in self.onlyfrom:
+            return False
+        return True
+
     def server_start(self):
-        log("starting checkmk_agent")
-        
+        log("starting checkmk_agent\n")
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGHUP, self._signal_handler)
@@ -1481,8 +1368,7 @@ class checkmk_server(TCPServer,checkmk_checker):
                 ## first parent
                 sys.exit(0)
         except OSError as e:
-            sys.stderr.write("Fork failed\n")
-            sys.stderr.flush()
+            log("err","Fork failed")
             sys.exit(1)
         os.chdir("/")
         os.setsid()
@@ -1493,8 +1379,7 @@ class checkmk_server(TCPServer,checkmk_checker):
                 ## second
                 sys.exit(0)
         except OSError as e:
-            sys.stderr.write("Fork 2 failed\n")
-            sys.stderr.flush()
+            log("err","Fork 2 failed")
             sys.exit(1)
         sys.stdout.flush()
         sys.stderr.flush()
@@ -1522,6 +1407,7 @@ class checkmk_server(TCPServer,checkmk_checker):
 
     def __del__(self):
         pass ## todo
+
 
 REGEX_SMART_VENDOR = re.compile(r"^\s*(?P<num>\d+)\s(?P<name>[-\w]+).*\s{2,}(?P<value>[\w\/() ]+)$",re.M)
 REGEX_SMART_DICT = re.compile(r"^(.*?):\s*(.*?)$",re.M)
@@ -1552,13 +1438,11 @@ class smart_disc(object):
             "Power On Hours"    : ("poweronhours"       ,lambda x: x.replace(",","")),
             "Power Cycles"      : ("powercycles"        ,lambda x: x.replace(",","")),
             "NVMe Version"      : ("transport"          ,lambda x: f"NVMe {x}"),
-            "Raw_Read_Error_Rate"   : ("error_rate"     ,lambda x: x.split(" ")[-1].replace(",","")),
+            "Raw_Read_Error_Rate"   : ("error_rate"     ,lambda x: x.replace(",","")),
             "Reallocated_Sector_Ct" : ("reallocate"     ,lambda x: x.replace(",","")),
-            "Seek_Error_Rate"       : ("seek_error_rate",lambda x: x.split(" ")[-1].replace(",","")),
+            "Seek_Error_Rate"       : ("seek_error_rate",lambda x: x.replace(",","")),
             "Power_Cycle_Count"     : ("powercycles"        ,lambda x: x.replace(",","")),
             "Temperature_Celsius"   : ("temperature"        ,lambda x: x.split(" ")[0]),
-            "Temperature_Internal"  : ("temperature"        ,lambda x: x.split(" ")[0]),
-            "Drive_Temperature"     : ("temperature"        ,lambda x: x.split(" ")[0]),
             "UDMA_CRC_Error_Count"  : ("udma_error"         ,lambda x: x.replace(",","")),
             "Offline_Uncorrectable" : ("uncorrectable"      ,lambda x: x.replace(",","")),
             "Power_On_Hours"        : ("poweronhours"       ,lambda x: x.replace(",","")),
@@ -1570,9 +1454,7 @@ class smart_disc(object):
             "Critical Comp. Temp. Threshold"    : ("temperature_crit"   ,lambda x: x.split(" ")[0]),
             "Media and Data Integrity Errors"   : ("media_errors"       ,lambda x: x),
             "Airflow_Temperature_Cel"           : ("temperature"        ,lambda x: x),
-            "number of hours powered up"        : ("poweronhours"       ,lambda x: x.split(".")[0]),
-            "Accumulated start-stop cycles"     : ("powercycles"        ,lambda x: x),
-            "SMART overall-health self-assessment test result" : ("smart_status" ,lambda x: int(x.lower().strip() == "passed")),
+            "SMART overall-health self-assessment test result" : ("smart_status" ,lambda x: int(x.lower() == "passed")),
             "SMART Health Status"   : ("smart_status" ,lambda x: int(x.lower() == "ok")),
         }
         self._get_data()
@@ -1613,8 +1495,6 @@ class smart_disc(object):
 
     def __str__(self):
         _ret = []
-        if getattr(self,"transport","").lower() == "iscsi": ## ignore ISCSI
-            return ""
         if not getattr(self,"model_type",None):
             self.model_type = getattr(self,"model_family","unknown")
         for _k,_v in self.__dict__.items():
@@ -1626,6 +1506,7 @@ class smart_disc(object):
 if __name__ == "__main__":
     import argparse
     class SmartFormatter(argparse.HelpFormatter):
+
         def _split_lines(self, text, width):
             if text.startswith('R|'):
                 return text[2:].splitlines()  
@@ -1633,44 +1514,29 @@ if __name__ == "__main__":
             return argparse.HelpFormatter._split_lines(self, text, width)
     _checks_available = sorted(list(map(lambda x: x.split("_")[1],filter(lambda x: x.startswith("check_") or x.startswith("checklocal_"),dir(checkmk_checker)))))
     _ = lambda x: x
-    _parser = argparse.ArgumentParser(
-            f"checkmk_agent for opnsense\nVersion: {__VERSION__}\n" + 
-            "##########################################\n\n" + 
-            "Latest Version under https://github.com/bashclub/check-opnsense\n" + 
-            "Questions under https://forum.opnsense.org/index.php?topic=26594.0\n\n" +
-            "Server-side implementation for\n" +
-            "\t* smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart\n" +
-            "\t* squid - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active\n" +
-            "\n", 
-        formatter_class=SmartFormatter,
-        epilog=f"""
-        The CHECKMK_BASEDIR is under {BASEDIR} (local,plugin,spool). 
-        Default config file location is {CHECKMK_CONFIG}, create it if it doesn't exist.
-        Config file options port,encrypt,onlyfrom,skipcheck with a colon and the value like the commandline option
-        """
-    )
+    _parser = argparse.ArgumentParser(f"checkmk_agent for opnsense\nVersion: {__VERSION__}\n##########################################\n", formatter_class=SmartFormatter)
+    _parser.add_argument("--port",type=int,default=6556,
+        help=_("Port checkmk_agent listen"))
     _parser.add_argument("--start",action="store_true",
         help=_("start the daemon"))
     _parser.add_argument("--stop",action="store_true",
         help=_("stop the daemon"))
-    _parser.add_argument("--status",action="store_true",
-        help=_("show daemon status"))
     _parser.add_argument("--nodaemon",action="store_true",
         help=_("run in foreground"))
+    _parser.add_argument("--status",action="store_true",
+        help=_("show status if running"))
     _parser.add_argument("--config",type=str,dest="configfile",default=CHECKMK_CONFIG,
         help=_("path to config file"))
-    _parser.add_argument("--port",type=int,default=6556,
-        help=_("port checkmk_agent listen"))
+    _parser.add_argument("--user",type=str,default="root",
+        help=_(""))
     _parser.add_argument("--encrypt",type=str,dest="encryptionkey",
-        help=_("encryption password (do not use from cmdline)"))
+        help=_("Encryption password (do not use from cmdline)"))
     _parser.add_argument("--pidfile",type=str,default="/var/run/checkmk_agent.pid",
-        help=_("path to pid file"))
+        help=_(""))
     _parser.add_argument("--onlyfrom",type=str,
         help=_("comma seperated ip addresses to allow"))
     _parser.add_argument("--skipcheck",type=str,
         help=_("R|comma seperated checks that will be skipped \n{0}".format("\n".join([", ".join(_checks_available[i:i+10]) for i in range(0,len(_checks_available),10)]))))
-    _parser.add_argument("--zabbix",action="store_true",
-        help=_("only output local checks as json for zabbix parsing"))
     _parser.add_argument("--debug",action="store_true",
         help=_("debug Ausgabe"))
     args = _parser.parse_args()
@@ -1686,69 +1552,56 @@ if __name__ == "__main__":
                 args.skipcheck = _v
             if _k.lower() == "localdir":
                 LOCALDIR = _v
-            if _k.lower() == "plugindir":
-                PLUGINSDIR = _v
             if _k.lower() == "spooldir":
                 SPOOLDIR = _v
 
     _server = checkmk_server(**args.__dict__)
-    _pid = 0
+    _pid = None
     try:
         with open(args.pidfile,"rt") as _pidfile:
             _pid = int(_pidfile.read())
-    except (FileNotFoundError,IOError,ValueError):
+    except (FileNotFoundError,IOError):
         _out = subprocess.check_output(["sockstat", "-l", "-p", str(args.port),"-P", "tcp"],encoding=sys.stdout.encoding)
         try:
             _pid = int(re.findall("\s(\d+)\s",_out.split("\n")[1])[0])
         except (IndexError,ValueError):
             pass
-    _active_methods = [getattr(args,x,False) for x in ("start","stop","status","zabbix","nodaemon","debug")]
-
-    if SYSHOOK_METHOD and any(_active_methods) == False:
-        setattr(args,SYSHOOK_METHOD[0],True)
     if args.start:
-        if _pid > 0:
+        if _pid:
             try:
                 os.kill(_pid,0)
-                sys.stderr.write(f"allready running with pid {_pid}\n")
-                sys.stderr.flush()
-                sys.exit(1)
             except OSError:
                 pass
+            else:
+                log("err",f"allready running with pid {_pid}")
+                sys.exit(1)
         _server.daemonize()
 
     elif args.status:
-        if _pid <= 0:
-            sys.stdout.write("not running\n")
+        if not _pid:
+            log("Not running\n")
         else:
-            try:
-                os.kill(_pid,0)
-                sys.stdout.write("running\n")
-            except OSError:
-                sys.stdout.write("not running\n")
-        sys.stdout.flush()
-
+            os.kill(int(_pid),signal.SIGHUP)
     elif args.stop:
-        if _pid == 0:
-            sys.stderr.write("not running\n")
-            sys.stderr.flush()
+        if not _pid:
+            log("Not running\n")
             sys.exit(1)
-        try:
-            os.kill(_pid,signal.SIGTERM)
-        except ProcessLookupError:
-            if os.path.exists(args.pidfile):
-                os.remove(args.pidfile)
+        os.kill(int(_pid),signal.SIGTERM)
 
     elif args.debug:
         sys.stdout.write(_server.do_checks(debug=True).decode(sys.stdout.encoding))
         sys.stdout.flush()
-
-    elif args.zabbix:
-        sys.stdout.write(_server.do_zabbix_output())
-        sys.stdout.flush()
-
     elif args.nodaemon:
         _server.server_start()
-
     else:
-        _parser.print_help()
+#        _server.server_start()
+## default start daemon
+        if _pid:
+            try:
+                os.kill(_pid,0)
+            except OSError:
+                pass
+            else:
+                log(f"allready running with pid {_pid}")
+                sys.exit(1)
+        _server.daemonize()
