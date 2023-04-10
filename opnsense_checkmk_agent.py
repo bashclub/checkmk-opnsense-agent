@@ -905,6 +905,8 @@ class checkmk_checker(object):
         _phase2config = _ipsec_config.get("phase2")
         if type(_phase1config) != list:
             _phase1config = [_phase1config]
+        if type(_phase2config) != list:
+            _phase2config = [_phase2config]
         _json_data = self._run_prog("/usr/local/opnsense/scripts/ipsec/list_status.py")
         if len(_json_data.strip()) > 20:
             _json_data = json.loads(_json_data)
@@ -1702,8 +1704,6 @@ if __name__ == "__main__":
 
     if SYSHOOK_METHOD and any(_active_methods) == False:
         setattr(args,SYSHOOK_METHOD[0],True)
-    #pprint(args.__dict__)
-    #pprint(_pid)
     if args.start:
         if _pid > 0:
             try:
