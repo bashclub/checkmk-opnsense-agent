@@ -21,13 +21,13 @@
 ## to install
 ## copy to /usr/local/etc/rc.syshook.d/start/99-checkmk_agent and chmod +x
 ##
-##  default config file /usr/local/checkmk_agent/etc/checkmk.conf
+##  default config file /usr/local/etc/checkmk.conf
 ##
 ## for server-side implementation of 
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "0.99.9"
+__VERSION__ = "1.0.0"
 
 import sys
 import os
@@ -64,8 +64,8 @@ from socketserver import TCPServer,StreamRequestHandler
 SCRIPTPATH = os.path.abspath(__file__)
 SYSHOOK_METHOD = re.findall("rc\.syshook\.d\/(start|stop)/",SCRIPTPATH)
 BASEDIR = "/usr/local/checkmk_agent"
-MK_CONFDIR = os.path.join(BASEDIR,"etc")
 CHECKMK_CONFIG = "/usr/local/etc/checkmk.conf"
+MK_CONFDIR = os.path.dirname(CHECKMK_CONFIG)
 LOCALDIR = os.path.join(BASEDIR,"local")
 PLUGINSDIR = os.path.join(BASEDIR,"plugins")
 SPOOLDIR = os.path.join(BASEDIR,"spool")
@@ -157,7 +157,7 @@ class checkmk_checker(object):
     _datastore_mutex = threading.RLock()
     _datastore = object_dict()
 
-    def encrypt(self,message,password='secretpassword'):
+    def encrypt_msg(self,message,password='secretpassword'):
         SALT_LENGTH = 8
         KEY_LENGTH = 32
         IV_LENGTH = 16
@@ -266,8 +266,8 @@ class checkmk_checker(object):
             _lines.append("<<<check_mk>>>")
             _lines.append("FailedPythonPlugins: {0}".format(",".join(_failed_sections)))
 
-        if self.encryptionkey:
-            return self.encrypt("\n".join(_lines),password=self.encryptionkey)
+        if self.encrypt and not debug:
+            return self.encrypt_msg("\n".join(_lines),password=self.encrypt)
         return "\n".join(_lines).encode("utf-8")
 
     def do_zabbix_output(self):
@@ -1423,13 +1423,13 @@ class checkmk_cached_process(object):
         return _data
 
 class checkmk_server(TCPServer,checkmk_checker):
-    def __init__(self,port,pidfile,onlyfrom=None,encryptionkey=None,skipcheck=None,**kwargs):
+    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,**kwargs):
         self.pidfile = pidfile
         self.onlyfrom = onlyfrom.split(",") if onlyfrom else None
         self.skipcheck = skipcheck.split(",") if skipcheck else []
         self._available_sysctl_list = self._run_prog("sysctl -aN").split()
         self._available_sysctl_temperature_list = list(filter(lambda x: x.lower().find("temperature") > -1 and x.lower().find("cpu") == -1,self._available_sysctl_list))
-        self.encryptionkey = encryptionkey
+        self.encrypt = encrypt
         self._mutex = threading.Lock()
         self.user = pwd.getpwnam("root")
         self.allow_reuse_address = True
@@ -1472,7 +1472,6 @@ class checkmk_server(TCPServer,checkmk_checker):
             log("stopping checkmk_agent")
             threading.Thread(target=self.shutdown,name='shutdown').start()
             sys.exit(0)
-        log("checkmk_agent running")
 
     def daemonize(self):
         try:
@@ -1634,21 +1633,11 @@ if __name__ == "__main__":
     _checks_available = sorted(list(map(lambda x: x.split("_")[1],filter(lambda x: x.startswith("check_") or x.startswith("checklocal_"),dir(checkmk_checker)))))
     _ = lambda x: x
     _parser = argparse.ArgumentParser(
-            f"checkmk_agent for opnsense\nVersion: {__VERSION__}\n" + 
-            "##########################################\n\n" + 
-            "Latest Version under https://github.com/bashclub/check-opnsense\n" + 
-            "Questions under https://forum.opnsense.org/index.php?topic=26594.0\n\n" +
-            "Server-side implementation for\n" +
-            "\t* smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart\n" +
-            "\t* squid - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active\n" +
-            "\n", 
-        formatter_class=SmartFormatter,
-        epilog=f"""
-        The CHECKMK_BASEDIR is under {BASEDIR} (local,plugin,spool). 
-        Default config file location is {CHECKMK_CONFIG}, create it if it doesn't exist.
-        Config file options port,encrypt,onlyfrom,skipcheck with a colon and the value like the commandline option
-        """
+        add_help=False,
+        formatter_class=SmartFormatter
     )
+    _parser.add_argument("--help",action="store_true",
+        help=_("show help message"))
     _parser.add_argument("--start",action="store_true",
         help=_("start the daemon"))
     _parser.add_argument("--stop",action="store_true",
@@ -1657,11 +1646,13 @@ if __name__ == "__main__":
         help=_("show daemon status"))
     _parser.add_argument("--nodaemon",action="store_true",
         help=_("run in foreground"))
+    _parser.add_argument("--update",nargs="?",const="main",type=str,choices=["main","testing"],
+        help=_("check for update"))
     _parser.add_argument("--config",type=str,dest="configfile",default=CHECKMK_CONFIG,
         help=_("path to config file"))
     _parser.add_argument("--port",type=int,default=6556,
         help=_("port checkmk_agent listen"))
-    _parser.add_argument("--encrypt",type=str,dest="encryptionkey",
+    _parser.add_argument("--encrypt",type=str,dest="encrypt",
         help=_("encryption password (do not use from cmdline)"))
     _parser.add_argument("--pidfile",type=str,default="/var/run/checkmk_agent.pid",
         help=_("path to pid file"))
@@ -1673,13 +1664,25 @@ if __name__ == "__main__":
         help=_("only output local checks as json for zabbix parsing"))
     _parser.add_argument("--debug",action="store_true",
         help=_("debug Ausgabe"))
+
+    def _args_error(message):
+        print("#"*35)
+        print("checkmk_agent for opnsense")
+        print(f"Version: {__VERSION__}")
+        print("#"*35)
+        print(message)
+        print("")
+        print("use --help or -h for help")
+        sys.exit(1)
+    _parser.error = _args_error
     args = _parser.parse_args()
+
     if args.configfile and os.path.exists(args.configfile):
         for _k,_v in re.findall(f"^(\w+):\s*(.*?)(?:\s+#|$)",open(args.configfile,"rt").read(),re.M):
             if _k == "port":
                 args.port = int(_v)
             if _k == "encrypt":
-                args.encryptionkey = _v
+                args.encrypt = _v
             if _k == "onlyfrom":
                 args.onlyfrom = _v
             if _k == "skipcheck":
@@ -1702,7 +1705,7 @@ if __name__ == "__main__":
             _pid = int(re.findall("\s(\d+)\s",_out.split("\n")[1])[0])
         except (IndexError,ValueError):
             pass
-    _active_methods = [getattr(args,x,False) for x in ("start","stop","status","zabbix","nodaemon","debug")]
+    _active_methods = [getattr(args,x,False) for x in ("start","stop","status","zabbix","nodaemon","debug","update","help")]
 
     if SYSHOOK_METHOD and any(_active_methods) == False:
         setattr(args,SYSHOOK_METHOD[0],True)
@@ -1719,14 +1722,13 @@ if __name__ == "__main__":
 
     elif args.status:
         if _pid <= 0:
-            sys.stdout.write("not running\n")
+            print("not running")
         else:
             try:
                 os.kill(_pid,0)
-                sys.stdout.write("running\n")
+                print("running")
             except OSError:
-                sys.stdout.write("not running\n")
-        sys.stdout.flush()
+                print("not running")
 
     elif args.stop:
         if _pid == 0:
@@ -1750,5 +1752,113 @@ if __name__ == "__main__":
     elif args.nodaemon:
         _server.server_start()
 
-    else:
+    elif args.update:
+        import hashlib
+        import difflib
+        from pkg_resources import parse_version
+        _github_req = requests.get(f"https://api.github.com/repos/bashclub/check-opnsense/contents/opnsense_checkmk_agent.py?ref={args.update}")
+        if _github_req.status_code != 200:
+            raise Exception("Github Error")
+        _github_version = _github_req.json()
+        _new_script = base64.b64decode(_github_version.get("content")).decode("utf-8")
+        _new_version = re.findall("^__VERSION__.*?\"([0-9.]*)\"",_new_script,re.M)
+        _new_version = _new_version[0] if _new_version else "0.0.0"
+        _script_location = os.path.realpath(__file__)
+        with (open(_script_location,"rb")) as _f:
+            _content = _f.read()
+        _current_sha = hashlib.sha1(f"blob {len(_content)}\0".encode("utf-8") + _content).hexdigest()
+        _content = _content.decode("utf-8")
+        if _current_sha == _github_version.get("sha"):
+            print(f"allready up to date {_current_sha}")
+            sys.exit(0)
+        else:
+            _version = parse_version(__VERSION__)
+            _nversion = parse_version(_new_version)
+            if _version == _nversion:
+                print("same Version but checksums mismatch")
+            elif _version > _nversion:
+                print(f"ATTENTION: Downgrade from {__VERSION__} to {_new_version}")
+        while True:
+            try:
+                _answer = input(f"Update {_script_location} to {_new_version} (y/n) or show difference (d)? ")
+            except KeyboardInterrupt:
+                sys.exit(0)
+            if _answer in ("Y","y","yes","j","J"):
+                with open(_script_location,"wb") as _f:
+                    _f.write(_new_script.encode("utf-8"))
+                
+                print(f"updated to Version {_new_version}")
+                if _pid > 0:
+                    try:
+                        os.kill(_pid,0)
+                        try:
+                            _answer = input(f"Daemon is running (pid:{_pid}), reload and restart (Y/N)? ")
+                        except KeyboardInterrupt:
+                            sys.exit(0)
+                        if _answer in ("Y","y","yes","j","J"):
+                            print("stopping Daemon")
+                            os.kill(_pid,signal.SIGTERM)
+                            print("waiting")
+                            time.sleep(5)
+                            print("restart")
+                            os.system(f"{_script_location} --start")
+                            sys.exit(0)
+                    except OSError:
+                        pass
+                break
+            elif _answer in ("D","d"):
+                _matcher = difflib.Differ()
+                _linenr = 0
+                _linenr_printed = False
+                for _line in _matcher.compare(_new_script.split("\n"),_content.split("\n")):
+                    if _line.startswith("+"):
+                        if not _linenr_printed:
+                            print(f"@@ {_linenr}")
+                            _linenr_printed = True
+                        print(_line)
+                        _linenr += 1
+                    elif _line.startswith("-"):
+                        if not _linenr_printed:
+                            print(f"@@ {_linenr}")
+                            _linenr_printed = True
+                        print(_line)
+                    elif _line.startswith("?"):
+                        pass
+                    else:
+                        _linenr_printed = False
+                        _linenr += 1
+                print(" ")
+            else:
+                break
+
+    elif args.help:
+        print("#"*35)
+        print("checkmk_agent for opnsense")
+        print(f"Version: {__VERSION__}")
+        print("#"*35)
+        print("")
+        print("Latest Version under https://github.com/bashclub/check-opnsense")
+        print("Questions under https://forum.opnsense.org/index.php?topic=26594.0\n")
+        print("Server-side implementation for")
+        print("-"*35)
+        print("\t* smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart")
+        print("\t* squid - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active\n")
         _parser.print_help()
+        print("\n")
+        print(f"The CHECKMK_BASEDIR is under {BASEDIR} (local,plugin,spool).")
+        print(f"Default config file location is {args.configfile}, create it if it doesn't exist.")
+        print("Config file options port,encrypt,onlyfrom,skipcheck with a colon and the value like the commandline option\n")
+        print("active config:")
+        print("-"*35)
+        for _opt in ("port","encrypt","onlyfrom","skipcheck"):
+            _val = getattr(args,_opt,None)
+            if _val:
+                print(f"{_opt}: {_val}")
+        print("")
+
+    else:
+        print("#"*35)
+        print("checkmk_agent for opnsense")
+        print(f"Version: {__VERSION__}")
+        print("#"*35)
+        print("use --help or -h for help")
