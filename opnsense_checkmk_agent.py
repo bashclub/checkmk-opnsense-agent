@@ -27,7 +27,7 @@
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "1.0.0"
+__VERSION__ = "1.0.2"
 
 import sys
 import os
@@ -95,7 +95,7 @@ def etree_to_dict(t):
     return d
 
 def log(message,prio="notice"):
-    priority = { 
+    priority = {
         "crit"      :syslog.LOG_CRIT,
         "err"       :syslog.LOG_ERR,
         "warning"   :syslog.LOG_WARNING,
@@ -937,22 +937,19 @@ class checkmk_checker(object):
                 _con["local-id"] = _sas.get("local-id")
                 _con["remote-id"] = _sas.get("remote-id")
 
-                _sas_installed = False
                 if _sas.get("state") != "ESTABLISHED":
                     continue
                 _con["remote-host"] = _sas.get("remote-host")
                 for _child in _sas.get("child-sas",{}).values():
                     if _child.get("state") != "INSTALLED":
                         continue
-                    _sas_installed = True
+                    _phase2_up += 1
                     _install_time = max(1,int(_child.get("install-time","1")))
                     _con["bytes-received"] += int(int(_child.get("bytes-in","0")) /_install_time)
                     _con["bytes-sent"] += int(int(_child.get("bytes-out","0")) /_install_time)
                     _con["life-time"] = max(_con["life-time"],_install_time)
                     _con["status"] = 0 if _con["status"] != 1 else 1
-                if _sas_installed:
-                    _phase2_up += 1
-
+                    
             _required_phase2 = len(list(filter(lambda x: x.get("ikeid") == _ikeid,_phase2config)))
 
             if _phase2_up == _required_phase2:
@@ -1708,6 +1705,7 @@ if __name__ == "__main__":
     _active_methods = [getattr(args,x,False) for x in ("start","stop","status","zabbix","nodaemon","debug","update","help")]
 
     if SYSHOOK_METHOD and any(_active_methods) == False:
+        log(f"using syshook {SYSHOOK_METHOD[0]}")
         setattr(args,SYSHOOK_METHOD[0],True)
     if args.start:
         if _pid > 0:
@@ -1760,10 +1758,12 @@ if __name__ == "__main__":
         if _github_req.status_code != 200:
             raise Exception("Github Error")
         _github_version = _github_req.json()
+        _github_last_modified = datetime.strptime(_github_req.headers.get("last-modified"),"%a, %d %b %Y %X %Z")
         _new_script = base64.b64decode(_github_version.get("content")).decode("utf-8")
         _new_version = re.findall("^__VERSION__.*?\"([0-9.]*)\"",_new_script,re.M)
         _new_version = _new_version[0] if _new_version else "0.0.0"
         _script_location = os.path.realpath(__file__)
+        _current_last_modified = datetime.fromtimestamp(int(os.path.getmtime(_script_location)))
         with (open(_script_location,"rb")) as _f:
             _content = _f.read()
         _current_sha = hashlib.sha1(f"blob {len(_content)}\0".encode("utf-8") + _content).hexdigest()
@@ -1782,6 +1782,7 @@ if __name__ == "__main__":
             try:
                 _answer = input(f"Update {_script_location} to {_new_version} (y/n) or show difference (d)? ")
             except KeyboardInterrupt:
+                print("")
                 sys.exit(0)
             if _answer in ("Y","y","yes","j","J"):
                 with open(_script_location,"wb") as _f:
@@ -1794,6 +1795,7 @@ if __name__ == "__main__":
                         try:
                             _answer = input(f"Daemon is running (pid:{_pid}), reload and restart (Y/N)? ")
                         except KeyboardInterrupt:
+                            print("")
                             sys.exit(0)
                         if _answer in ("Y","y","yes","j","J"):
                             print("stopping Daemon")
@@ -1807,27 +1809,15 @@ if __name__ == "__main__":
                         pass
                 break
             elif _answer in ("D","d"):
-                _matcher = difflib.Differ()
-                _linenr = 0
-                _linenr_printed = False
-                for _line in _matcher.compare(_new_script.split("\n"),_content.split("\n")):
-                    if _line.startswith("+"):
-                        if not _linenr_printed:
-                            print(f"@@ {_linenr}")
-                            _linenr_printed = True
-                        print(_line)
-                        _linenr += 1
-                    elif _line.startswith("-"):
-                        if not _linenr_printed:
-                            print(f"@@ {_linenr}")
-                            _linenr_printed = True
-                        print(_line)
-                    elif _line.startswith("?"):
-                        pass
-                    else:
-                        _linenr_printed = False
-                        _linenr += 1
-                print(" ")
+                for _line in difflib.unified_diff(_content.split("\n"),
+                            _new_script.split("\n"),
+                            fromfile=f"Version: {__VERSION__}",
+                            fromfiledate=_current_last_modified.isoformat(),
+                            tofile=f"Version: {_new_version}",
+                            tofiledate=_github_last_modified.isoformat(),
+                            n=1,
+                            lineterm=""):
+                    print(_line)
             else:
                 break
 
@@ -1857,6 +1847,7 @@ if __name__ == "__main__":
         print("")
 
     else:
+        log("no arguments")
         print("#"*35)
         print("checkmk_agent for opnsense")
         print(f"Version: {__VERSION__}")
