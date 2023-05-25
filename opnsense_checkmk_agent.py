@@ -27,7 +27,7 @@
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "1.0.2"
+__VERSION__ = "1.0.3"
 
 import sys
 import os
@@ -63,7 +63,7 @@ from socketserver import TCPServer,StreamRequestHandler
 
 SCRIPTPATH = os.path.abspath(__file__)
 SYSHOOK_METHOD = re.findall("rc\.syshook\.d\/(start|stop)/",SCRIPTPATH)
-BASEDIR = "/usr/local/checkmk_agent"
+BASEDIR = "/usr/local/check_mk_agent"
 CHECKMK_CONFIG = "/usr/local/etc/checkmk.conf"
 MK_CONFDIR = os.path.dirname(CHECKMK_CONFIG)
 LOCALDIR = os.path.join(BASEDIR,"local")
@@ -952,7 +952,7 @@ class checkmk_checker(object):
                     
             _required_phase2 = len(list(filter(lambda x: x.get("ikeid") == _ikeid,_phase2config)))
 
-            if _phase2_up == _required_phase2:
+            if _phase2_up >= _required_phase2:
                 _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
             elif _phase2_up == 0:
                 if _condata.keys():
