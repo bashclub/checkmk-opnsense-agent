@@ -27,7 +27,7 @@
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "1.0.3"
+__VERSION__ = "1.0.4"
 
 import sys
 import os
@@ -217,7 +217,10 @@ class checkmk_checker(object):
                     except:
                         _cachetime = 0
                     try:
-                        _lines.append(self._run_cache_prog(_plugin_file,_cachetime))
+                        if _cachetime > 0:
+                            _lines.append(self._run_cache_prog(_plugin_file,_cachetime))
+                        else:
+                            _lines.append(self._run_prog(_plugin_file))
                     except:
                         _errors.append(traceback.format_exc())
 
@@ -241,7 +244,10 @@ class checkmk_checker(object):
                     except:
                         _cachetime = 0
                     try:
-                        _lines.append(self._run_cache_prog(_local_file,_cachetime))
+                        if _cachetime > 0:
+                            _lines.append(self._run_cache_prog(_local_file,_cachetime))
+                        else:
+                            _lines.append(self._run_prog(_local_file))
                     except:
                         _errors.append(traceback.format_exc())
 
