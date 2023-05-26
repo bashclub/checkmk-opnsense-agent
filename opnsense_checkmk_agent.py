@@ -27,7 +27,7 @@
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "1.0.4"
+__VERSION__ = "1.0.5"
 
 import sys
 import os
@@ -69,6 +69,10 @@ MK_CONFDIR = os.path.dirname(CHECKMK_CONFIG)
 LOCALDIR = os.path.join(BASEDIR,"local")
 PLUGINSDIR = os.path.join(BASEDIR,"plugins")
 SPOOLDIR = os.path.join(BASEDIR,"spool")
+
+os.environ["MK_CONFDIR"] = MK_CONFDIR
+os.environ["MK_LIBDIR"] = BASEDIR
+os.environ["MK_VARDIR"] = BASEDIR
 
 class object_dict(defaultdict):
     def __getattr__(self,name):
