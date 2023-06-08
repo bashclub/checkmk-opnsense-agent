@@ -978,7 +978,7 @@ class checkmk_checker(object):
         def checklocal_ipsec_new(self):
         _ret =[]
         try:
-            _swanctl_config = self._config_reader().get("OPNsense").get("Swanctl").get("Connections") #.get("Connection")
+            _swanctl_config = self._config_reader().get("OPNsense").get("Swanctl").get("Connections")
             if type(_swanctl_config) != dict:
                 return []
         except:
@@ -996,10 +996,7 @@ class checkmk_checker(object):
             _json_data = {}
         for _connection in _connections_config:
             _uuid = _connection.get("@uuid","")
-            _remote = _connection.get("remote_addrs")
             _name = _connection.get("description")
-            #_ret.append( "Connection: '%s' rem: '%s' uuid: '%s'" % (_name,_remote,_uuid) )
-            #continue
             if len(_name.strip()) < 1:
                 _name = _connection.get("remote_addrs")
             _condata = _json_data.get(f"{_uuid}",{})
