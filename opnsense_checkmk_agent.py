@@ -27,7 +27,7 @@
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "1.0.5"
+__VERSION__ = "1.0.6"
 
 import sys
 import os
@@ -913,6 +913,8 @@ class checkmk_checker(object):
         _ipsec_config = self._config_reader().get("ipsec")
         if type(_ipsec_config) != dict:
             return []
+        if _ipsec_config.get("enable") != "1":
+            return []
         _phase1config = _ipsec_config.get("phase1")
         _phase2config = _ipsec_config.get("phase2")
         if type(_phase1config) != list:
@@ -960,9 +962,11 @@ class checkmk_checker(object):
                     _con["life-time"] = max(_con["life-time"],_install_time)
                     _con["status"] = 0 if _con["status"] != 1 else 1
                     
-            _required_phase2 = len(list(filter(lambda x: x.get("ikeid") == _ikeid,_phase2config)))
+            ## QuickHack #FIXME remote-id/local-id translate type to ip, set and check if sas and config is same count
+            #_required_phase2 = len(list(filter(lambda x: x.get("ikeid") == _ikeid,_phase2config)))
 
-            if _phase2_up >= _required_phase2:
+            #if _phase2_up >= _required_phase2:
+            if _phase2_up > 0:
                 _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
             elif _phase2_up == 0:
                 if _condata.keys():
