@@ -169,7 +169,7 @@ class checkmk_checker(object):
         SALT = b"Salted__"
         _backend = crypto_default_backend()
         _kdf_key =  PBKDF2HMAC(
-            algorithm = hashes.SHA256,
+            algorithm = hashes.SHA256(),
             length = KEY_LENGTH + IV_LENGTH,
             salt = SALT,
             iterations = PBKDF2_CYCLES,
