@@ -720,7 +720,7 @@ class checkmk_checker(object):
             try:
                 _sock.connect(_path)
                 _data = _sock.recv(1024).decode("utf-8").strip()
-                _name, _rtt, _rttsd, _loss = re.findall("(\w+)\s(\d+)\s(\d+)\s(\d+)$",_data)[0]
+                _name, _rtt, _rttsd, _loss = re.findall("(\S+)\s(\d+)\s(\d+)\s(\d+)$",_data)[0]
                 assert _name.strip() == gateway
                 return int(_rtt)/1_000_000.0,int(_rttsd)/1_000_000.0, int(_loss)
             except:
