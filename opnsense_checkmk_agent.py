@@ -1,3 +1,5 @@
+
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # vim: set fileencoding=utf-8:noet
@@ -27,7 +29,7 @@
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "1.0.6"
+__VERSION__ = "1.0.7"
 
 import sys
 import os
@@ -47,6 +49,7 @@ import base64
 import traceback
 import syslog
 import requests
+import hashlib
 from urllib3.connection import HTTPConnection
 from urllib3.connectionpool import HTTPConnectionPool
 from requests.adapters import HTTPAdapter
@@ -258,10 +261,10 @@ class checkmk_checker(object):
         if os.path.isdir(SPOOLDIR):
             _now = time.time()
             for _filename in glob.glob(f"{SPOOLDIR}/*"):
-                _maxage = re.search("^\d+",_filename)
+                _maxage = re.search("^(\d+)_",_filename)
 
                 if _maxage:
-                    _maxage = int(_maxage.group())
+                    _maxage = int(_maxage.group(1))
                     _mtime = os.stat(_filename).st_mtime
                     if _now - _mtime > _maxage:
                         continue
@@ -710,7 +713,7 @@ class checkmk_checker(object):
             _traffic_out = int(totalbytesout - _hist_bytesout) /  max(1,_slot - _hist_slot)
         if _hist_slot != _slot:
             self._set_storedata(modul,interface,(_slot,totalbytesin,totalbytesout))
-        return _traffic_in,_traffic_out
+        return max(0,_traffic_in),max(0,_traffic_out)
 
     @staticmethod
     def _get_dpinger_gateway(gateway):
@@ -729,9 +732,11 @@ class checkmk_checker(object):
 
     def checklocal_gateway(self):
         _ret = []
-        _gateways = self._config_reader().get("gateways")
+        _gateways = self._config_reader().get("OPNsense",{}).get("Gateways")
         if not _gateways:
-            return []
+            _gateways = self._config_reader().get("gateways")
+            if not _gateways:
+                return []
         _gateway_items = _gateways.get("gateway_item",[])
         if type(_gateway_items) != list:
             _gateway_items = [_gateway_items] if _gateway_items else []
@@ -761,10 +766,14 @@ class checkmk_checker(object):
     def checklocal_openvpn(self):
         _ret = []
         _cfr = self._config_reader().get("openvpn")
+        _cfn = self._config_reader().get("OPNsense").get("OpenVPN") ##TODO new Connections
         if type(_cfr) != dict:
             return _ret
 
-        _cso = _cfr.get("openvpn-csc")
+        if "openvpn-csc" in _cfr.keys():
+            _cso = _cfr.get("openvpn-csc") ## pre v23.7
+        else:
+            _cso = _cfn.get("Overwrites").get("Overwrite")
         _monitored_clients = {}
         if type(_cso) == dict:
             _cso = [_cso]
@@ -779,6 +788,8 @@ class checkmk_checker(object):
         if type(_vpnclient) != list:
             _vpnclient = [_vpnclient] if _vpnclient else []
         for _server in _vpnserver + _vpnclient:
+            if _server.get("disable") == '1':
+                continue ## FIXME OK/WARN/SKIP
             ## server_tls, p2p_shared_key p2p_tls
             _server["name"] = _server.get("description").strip() if _server.get("description") else "OpenVPN_{protocoll}_{local_port}".format(**_server)
 
@@ -927,6 +938,8 @@ class checkmk_checker(object):
         else:
             _json_data = {}
         for _phase1 in _phase1config:
+            if _phase1 == None:
+                continue            
             _ikeid = _phase1.get("ikeid")
             _name = _phase1.get("descr")
             if len(_name.strip()) < 1:
@@ -975,7 +988,7 @@ class checkmk_checker(object):
                     _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not running".format(**_con))
             else:
                 _con["status"] = max(_con["status"],1)
-                _con["phase2"] = f"{_phase2_up}/{_required_phase2}"
+                _con["phase2"] = f"{_phase2_up}"
                 _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {phase2} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
         return _ret
 
@@ -1009,7 +1022,7 @@ class checkmk_checker(object):
             _client["interface"] = _values[0].strip()
             _client["endpoint"]  = _values[3].strip().rsplit(":",1)[0]
             _client["last_handshake"]  = int(_values[5].strip())
-            _client["bytes_received"], _client["bytes_sent"]  = self._get_traffic("wireguard","",int(_values[6].strip()),int(_values[7].strip()))
+            _client["bytes_received"], _client["bytes_sent"]  = self._get_traffic("wireguard",_values[0].strip(),int(_values[6].strip()),int(_values[7].strip()))
             _client["status"] = 2 if _now - _client["last_handshake"] > 300 else 0  ## 5min timeout
 
         for _client in _clients.values():
