@@ -771,7 +771,9 @@ class checkmk_checker(object):
         if "openvpn-csc" in _cfr.keys():
             _cso = _cfr.get("openvpn-csc") ## pre v23.7
         else:
-            _cso = _cfn.get("Overwrites").get("Overwrite")
+            _cso = _cfn.get("Overwrites")
+            if type(_cso) == dict:
+                _cso = _cso.get("Overwrite")
         _monitored_clients = {}
         if type(_cso) == dict:
             _cso = [_cso]
