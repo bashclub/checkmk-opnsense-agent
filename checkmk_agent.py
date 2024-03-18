@@ -1879,4 +1879,4 @@ if __name__ == "__main__":
         print("checkmk_agent for opnsense")
         print(f"Version: {__VERSION__}")
         print("#"*35)
-        print("use --help or -h for help")
+        print("use --help or -h for help")% 
