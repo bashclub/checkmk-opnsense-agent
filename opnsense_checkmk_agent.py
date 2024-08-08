@@ -27,7 +27,7 @@
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "1.0.7"
+__VERSION__ = "1.0.8"
 
 import sys
 import os
@@ -562,7 +562,8 @@ class checkmk_checker(object):
                     except ValueError:
                         pass
 
-            if _interface_dict["flags"] & 0x2 or _interface_dict["flags"] & 0x10 or _interface_dict["flags"] & 0x80: ## nur broadcast oder ptp .. und noarp
+            _flags = _interface_dict.get("flags")
+            if _flags and (_flags & 0x2 or _flags & 0x10 or _flags & 0x80): ## nur broadcast oder ptp .. und noarp
                 self._all_interfaces[_interface] = _interface_dict
             else:
                 continue
