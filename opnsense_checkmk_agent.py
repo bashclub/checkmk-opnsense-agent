@@ -27,7 +27,7 @@
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
-__VERSION__ = "1.0.8"
+__VERSION__ = "1.0.9"
 
 import sys
 import os
@@ -131,8 +131,11 @@ class NginxConnectionPool(HTTPConnectionPool):
         return NginxConnection()
 
 class NginxAdapter(HTTPAdapter):
+    ## deprecated
     def get_connection(self, url, proxies=None):
         return NginxConnectionPool()
+    def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
+            return NginxConnectionPool()
 
 def check_pid(pid):
     try:
