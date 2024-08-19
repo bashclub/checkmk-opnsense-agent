@@ -1,7 +1,3 @@
-
-Zum Hauptinhalt springen
-checkmk_agent_v1.2.py
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # vim: set fileencoding=utf-8:noet
@@ -2523,8 +2519,3 @@ if __name__ == "__main__":
         print(f"Version: {__VERSION__}")
         print("#"*35)
         print("use --help or -h for help")
-
-Nextcloud ist nicht böse! – Niemand spricht über den Bashclub
-Impressum · Datenschutzerklärung
-
-Hole dir dein eigenes kostenloses Konto
