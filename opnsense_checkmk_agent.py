@@ -379,7 +379,10 @@ class checkmk_checker(object):
     def _certificate_parser(self):
         self._certificate_timestamp = time.time()
         self._certificate_store = {}
-        for _cert in self._config_reader().get("cert"):
+        _certs = self._config_reader().get("cert")
+        if not isinstance(_certs, list):
+            _certs = [_certs]
+        for _cert in _certs:
             try:
                 _certpem = base64.b64decode(_cert.get("crt"))
                 _x509cert = x509.load_pem_x509_certificate(_certpem,crypto_default_backend())
