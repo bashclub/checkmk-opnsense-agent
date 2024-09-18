@@ -26,7 +26,6 @@
 ## for server-side implementation of 
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
-
 ##  task types2
 ##  speedtest|proxy|ssh|nmap|domain|blocklist
 ##
