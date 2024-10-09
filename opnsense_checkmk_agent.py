@@ -576,7 +576,7 @@ class checkmk_checker(object):
             #if _interface.startswith("vmx"): ## vmware fix 10GBe (as OS Support)
             #    _interface_dict["speed"] = "10000"
             _interface_dict["systime"] = _now
-            for _key, _val in re.findall("^\s*(\w+)[:\s=]+(.*?)$",_data,re.MULTILINE):
+            for _key, _val in re.findall("^\s*(\w+)[:\s=]+(.*?)(?!\n\t\t)$",_data,re.DOTALL | re.MULTILINE):
                 if _key == "description":
                     _interface_dict["interface_name"] = re.sub("_\((lan|wan|opt\d+)\)$","",_val.strip().replace(" ","_"))
                 if _key == "groups":
