@@ -524,6 +524,24 @@ class checkmk_checker(object):
             )
         except:
             pass
+
+        try:
+            _laggs = self._config_reader().get("laggs").get("lagg")
+            if type(_laggs) == dict:
+                _laggs = [_laggs]
+            _ifs.update({
+                l['laggif']: l['laggif']
+                for l in _laggs
+                if l['laggif'] not in _ifs
+            })
+            _ifs.update({
+                m: f"{l['laggif']}_{m}"
+                for l in _laggs
+                for m in l['members'].split(',')
+                if m not in _ifs
+            })
+        except:
+            pass
         return _ifs
 
     def checklocal_firmware(self):
