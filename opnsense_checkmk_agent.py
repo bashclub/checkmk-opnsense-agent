@@ -880,7 +880,7 @@ class checkmk_checker(object):
             if _server.get("disable") == '1':
                 continue ## FIXME OK/WARN/SKIP
             ## server_tls, p2p_shared_key p2p_tls
-            _server["name"] = _server.get("description").strip() if _server.get("description") else "OpenVPN_{protocoll}_{local_port}".format(**_server)
+            _server["name"] = _server.get("description").strip() if _server.get("description") else "OpenVPN_{protocol}_{local_port}".format(**_server)
 
             _caref = _server.get("caref")
             _server_cert = self._get_certificate(_server.get("certref"))
