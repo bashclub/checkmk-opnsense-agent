@@ -26,12 +26,13 @@
 ## for server-side implementation of 
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
+
 ##  task types2
 ##  speedtest|proxy|ssh|nmap|domain|blocklist
 ##
 
 
-__VERSION__ = "1.2.8"
+__VERSION__ = "1.2.11"
 
 import sys
 import os
@@ -45,6 +46,7 @@ import signal
 import struct
 import subprocess
 import pwd
+import platform
 import threading
 import ipaddress
 import base64
@@ -63,7 +65,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from datetime import datetime
 from xml.etree import cElementTree as ELementTree
 from collections import Counter,defaultdict
-from pprint import pprint
+from pprint import pprint,pformat
 from socketserver import TCPServer,StreamRequestHandler
 
 import unbound
@@ -463,7 +465,10 @@ class checkmk_checker(object):
     def _certificate_parser(self):
         self._certificate_timestamp = time.time()
         self._certificate_store = {}
-        for _cert in self._config_reader().get("cert"):
+        _certs = self._config_reader().get("cert")
+        if type(_certs) != list:
+            _certs = [_certs]
+        for _cert in _certs:
             try:
                 _certpem = base64.b64decode(_cert.get("crt"))
                 _x509cert = x509.load_pem_x509_certificate(_certpem,crypto_default_backend())
@@ -552,7 +557,7 @@ class checkmk_checker(object):
         _interface_data = []
         _interface_data = self._run_prog("/usr/bin/netstat -i -b -d -n -W -f link").split("\n")
         _header = _interface_data[0].lower()
-        _header = _header.replace("pkts","packets").replace("coll","collisions").replace("errs","error").replace("ibytes","rx").replace("obytes","tx")
+        _header = _header.replace("pkts","packets").replace("coll","collisions").replace("errs","errors").replace("ibytes","rx").replace("obytes","tx")
         _header = _header.split()
         _interface_stats = dict(
             map(
@@ -659,7 +664,7 @@ class checkmk_checker(object):
             if not _opnsense_ifs.get(_interface):
                 continue
             for _key,_val in _interface_dict.items():
-                if _key in ("mtu","ipackets","ierror","idrop","rx","opackets","oerror","tx","collisions","drop","interface_name","up","systime","phys_address","speed","duplex"):
+                if _key in ("mtu","ipackets","ierrors","idrop","rx","opackets","oerrors","tx","collisions","drop","interface_name","up","systime","phys_address","speed","duplex"):
                     if type(_val) in (str,int,float):
                         _sanitized_interface = _interface.replace(".","_")
                         _ret.append(f"{_sanitized_interface}.{_key} {_val}")
@@ -683,7 +688,6 @@ class checkmk_checker(object):
         return [f"0 Services running_services={_num_running:.0f}|stopped_service={_num_stopped:.0f} All Services running"]
 
     def checklocal_carpstatus(self):
-        #sysctl net.inet.carp.demotion #TODO
         _ret = []
         _virtual = self._config_reader().get("virtualip")
         if not _virtual:
@@ -693,6 +697,7 @@ class checkmk_checker(object):
             return []
         if type(_virtual) != list:
             _virtual = [_virtual]
+        _carp_demotion = self._run_prog("sysctl net.inet.carp.demotion").split(" ")[1].strip()
         for _vip in _virtual:
             if _vip.get("mode") != "carp":
                 continue
@@ -707,11 +712,12 @@ class checkmk_checker(object):
                 _status = 0 if _carpstatus == "BACKUP" else 1
             if not _interface:
                 continue
-            _ret.append(f"{_status} \"CARP: {_interface_name}@{_vhid}\" master={_carpstatus_num} {_carpstatus} {_ipaddr} ({_interface})")
+            _ret.append(f"{_status} \"CARP: {_interface_name}@{_vhid}\" master={_carpstatus_num} {_carpstatus} {_ipaddr} ({_interface}) demotion:{_carp_demotion}")
         return _ret
 
     def check_dhcp(self):
-        if not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
+        _dhcp = self._config_reader().get("dhcpd")
+        if  type(_dhcp) != dict or not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
             return []
         _ret = ["<<<isc_dhcpd>>>"]
         _ret.append("[general]\nPID: {0}".format(self.pidof("dhcpd",-1)))
@@ -720,21 +726,21 @@ class checkmk_checker(object):
         ## FIXME 
         #_dhcpleases_dict = dict(map(lambda x: (self.ip2int(x[0]),x[1]),re.findall(r"lease\s(?P<ipaddr>[0-9.]+)\s\{.*?.\n\s+binding state\s(?P<state>\w+).*?\}",_dhcpleases,re.DOTALL)))
         _dhcpleases_dict = dict(re.findall(r"lease\s(?P<ipaddr>[0-9.]+)\s\{.*?.\n\s+binding state\s(?P<state>active).*?\}",_dhcpleases,re.DOTALL))
-        _dhcpconf = open("/var/dhcpd/etc/dhcpd.conf","r").read()
         _ret.append("[pools]")
-        for _subnet in re.finditer(r"subnet\s(?P<subnet>[0-9.]+)\snetmask\s(?P<netmask>[0-9.]+)\s\{.*?(?:pool\s\{.*?\}.*?)*}",_dhcpconf,re.DOTALL):
-            #_cidr = bin(self.ip2int(_subnet.group(2))).count("1")
-            #_available = 0
-            for _pool in re.finditer("pool\s\{.*?range\s(?P<start>[0-9.]+)\s(?P<end>[0-9.]+).*?\}",_subnet.group(0),re.DOTALL):
-                #_start,_end = self.ip2int(_pool.group(1)), self.ip2int(_pool.group(2))
-                #_ips_in_pool = filter(lambda x: _start < x[0] < _end,_dhcpleases_dict.items())
-                #pprint(_dhcpleases_dict)
-                #pprint(sorted(list(map(lambda x: (self._int2ip(x[0]),x[1]),_ips_in_pool))))
-                #_available += (_end - _start)
-                _ret.append("{0}\t{1}".format(_pool.group(1),_pool.group(2)))
-            
-            #_ret.append("DHCP_{0}/{1} {2}".format(_subnet.group(1),_cidr,_available))
-        
+        for _dhcpsetting in _dhcp.values():
+            if _dhcpsetting.get("enable") != "1":
+                continue
+            _range = _dhcpsetting.get("range",{"from":"127.0.0.2","to":"127.0.0.2"})
+            _ret.append("{from}\t{to}".format(**_range))
+            _pools = _dhcpsetting.get("pool")
+            if not _pools:
+                continue
+            if type(_pools) != list:
+                _pools = [_pools]
+            for _pool in _pools:
+                _range = _pool.get("range",{"from":"127.0.0.2","to":"127.0.0.2"})
+                _ret.append("{from}\t{to}".format(**_range))
+
         _ret.append("[leases]")
         for _ip in sorted(_dhcpleases_dict.keys()):
             _ret.append(_ip)
@@ -855,7 +861,9 @@ class checkmk_checker(object):
         _cfr = self._config_reader().get("openvpn")
         _cfn = self._config_reader().get("OPNsense").get("OpenVPN") ##TODO new Connections
         if type(_cfr) != dict:
-            return _ret
+            _cfr = {}
+        if type(_cfn) != dict:
+            _cfn = {}
 
         if "openvpn-csc" in _cfr.keys():
             _cso = _cfr.get("openvpn-csc") ## pre v23.7
@@ -870,106 +878,116 @@ class checkmk_checker(object):
             _monitored_clients = dict(map(lambda x: (x.get("common_name").upper(),dict(x,current=[])),_cso))
             
         _now = time.time()
-        _vpnclient = _cfr.get("openvpn-client",[])
-        _vpnserver = _cfr.get("openvpn-server",[])
-        if type(_vpnserver) != list:
-            _vpnserver = [_vpnserver] if _vpnserver else []
-        if type(_vpnclient) != list:
-            _vpnclient = [_vpnclient] if _vpnclient else []
-        for _server in _vpnserver + _vpnclient:
-            if _server.get("disable") == '1':
-                continue ## FIXME OK/WARN/SKIP
-            ## server_tls, p2p_shared_key p2p_tls
-            _server["name"] = _server.get("description").strip() if _server.get("description") else "OpenVPN_{protocoll}_{local_port}".format(**_server)
-
-            _caref = _server.get("caref")
-            _server_cert = self._get_certificate(_server.get("certref"))
-            _server["status"] = 3
-            _server["expiredays"] = 0
-            _server["expiredate"] = "no certificate found"
-            if _server_cert:
-                _notvalidafter = _server_cert.get("not_valid_after",0)
-                _server["expiredays"] = int((_notvalidafter - _now) / 86400)
-                _server["expiredate"] = time.strftime("Cert Expire: %d.%m.%Y",time.localtime(_notvalidafter))
-                if _server["expiredays"] < 61:
-                    _server["status"] = 2 if _server["expiredays"] < 31 else 1
+        _cfn_instances = _cfn.get("Instances")
+        if type(_cfn_instances) == dict:
+            _cfn_instances = _cfn_instances.get("Instance")
+        for _instance in (_cfr.get("openvpn-client"),_cfr.get("openvpn-server"),_cfn_instances):
+            if type(_instance) == dict:
+                _instance = [_instance]
+            if type(_instance) != list:
+                continue
+            for _server in _instance:
+                if _server.get("disable") == '1' or _server.get("enabled") == '0':
+                    continue ## FIXME OK/WARN/SKIP
+                if "role" in _server.keys():
+                    _server["type"] = _server.get("role")
+                    _server["protocol"] = _server.get("proto")
+                    _server["tunnel_network"] = _server.get("server")
+                    _server["local_port"] = _server.get("port")
+                    _server["certref"] = _server.get("cert")
+                    _server["socket"] = "/var/etc/openvpn/instance-{@uuid}.sock".format(**_server)
                 else:
-                    _server["expiredate"] = "\\n" + _server["expiredate"]
+                    _server["type"] = "server" if _server.get("local_port") else "client"
+                    _server["socket"] = "/var/etc/openvpn/{type}{vpnid}.sock".format(**_server)
 
-            _server["type"] = "server" if _server.get("local_port") else "client"
-            if _server.get("mode") in ("p2p_shared_key","p2p_tls"):
-                _unix = "/var/etc/openvpn/{type}{vpnid}.sock".format(**_server)
-                try:
-                    
-                    _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
-                        "SRV_{name}".format(**_server),
-                        *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))))
-                    )
-                    _laststate = self._read_from_openvpnsocket(_unix,"state 1").strip().split("\r\n")[-2]
-                    _timestamp, _server["connstate"], _data = _laststate.split(",",2)
-                    if _server["connstate"] == "CONNECTED":
-                        _data = _data.split(",")
-                        _server["vpn_ipaddr"] = _data[1]
-                        _server["remote_ipaddr"] = _data[2]
-                        _server["remote_port"] = _data[3]
-                        _server["source_addr"] = _data[4]
-                        _server["status"] = 0 if _server["status"] == 3 else _server["status"]
-                        _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=1;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} Connected {remote_ipaddr}:{remote_port} {vpn_ipaddr} {expiredate}\Source IP: {source_addr}'.format(**_server))
+                _server["name"] = _server.get("description").strip() if _server.get("description") else "OpenVPN_{protocol}_{local_port}".format(**_server)
+
+                _server_cert = self._get_certificate(_server.get("certref"))
+                _server["status"] = 3
+                _server["expiredays"] = 0
+                _server["expiredate"] = "no certificate found"
+                if _server_cert:
+                    _notvalidafter = _server_cert.get("not_valid_after",0)
+                    _server["expiredays"] = int((_notvalidafter - _now) / 86400)
+                    _server["expiredate"] = time.strftime("Cert Expire: %d.%m.%Y",time.localtime(_notvalidafter))
+                    if _server["expiredays"] < 61:
+                        _server["status"] = 2 if _server["expiredays"] < 31 else 1
                     else:
-                        if _server["type"] == "client":
-                            _server["status"] = 2
-                            _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {connstate} {expiredate}'.format(**_server))
-                        else:
-                            _server["status"] = 1 if _server["status"] != 2 else 2
-                            _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} waiting on Port {local_port}/{protocol} {expiredate}'.format(**_server))
-                except:
-                    _ret.append('2 "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:/{protocol} {expiredate}'.format(**_server))
-                    continue
-            else:
-                if not _server.get("maxclients"):
-                    _max_clients = ipaddress.IPv4Network(_server.get("tunnel_network")).num_addresses -2
-                    if _server.get("topology_subnet") != "yes":
-                        _max_clients = max(1,int(_max_clients/4)) ## p2p
-                    _server["maxclients"] = _max_clients
-                try:
-                    _unix = "/var/etc/openvpn/{type}{vpnid}.sock".format(**_server)
+                        _server["expiredate"] = "\\n" + _server["expiredate"]
+
+                ## server_tls, p2p_shared_key p2p_tls
+                if _server.get("mode") in ("p2p_shared_key","p2p_tls") or _server.get("topology") == "p2p":
                     try:
                         
                         _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
                             "SRV_{name}".format(**_server),
-                            *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_unix,"load-stats"))))
+                            *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_server["socket"],"load-stats"))))
                         )
-                        _server["status"] = 0 if _server["status"] == 3 else _server["status"]
+                        _laststate = self._read_from_openvpnsocket(_server["socket"],"state 1").strip().split("\r\n")[-2]
+                        _timestamp, _server["connstate"], _data = _laststate.split(",",2)
+                        if _server["connstate"] == "CONNECTED":
+                            _data = _data.split(",")
+                            _server["vpn_ipaddr"] = _data[1]
+                            _server["remote_ipaddr"] = _data[2]
+                            _server["remote_port"] = _data[3]
+                            _server["source_addr"] = _data[4]
+                            _server["status"] = 0 if _server["status"] == 3 else _server["status"]
+                            _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=1;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} Connected {remote_ipaddr}:{remote_port} {vpn_ipaddr} {expiredate}\Source IP: {source_addr}'.format(**_server))
+                        else:
+                            if _server["type"] == "client":
+                                _server["status"] = 2
+                                _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {connstate} {expiredate}'.format(**_server))
+                            else:
+                                _server["status"] = 1 if _server["status"] != 2 else 2
+                                _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} waiting on Port {local_port}/{protocol} {expiredate}'.format(**_server))
                     except:
-                        _server["bytesin"], _server["bytesout"] = 0,0
-                        raise
-                    
-                    _number_of_clients = 0
-                    _now = int(time.time())
-                    _response = self._read_from_openvpnsocket(_unix,"status 2")
-                    for _client_match in re.finditer("^CLIENT_LIST,(.*?)$",_response,re.M):
-                        _number_of_clients += 1
-                        _client_raw = list(map(lambda x: x.strip(),_client_match.group(1).split(",")))
-                        _client = {
-                            "server"         : _server.get("name"),
-                            "common_name"    : _client_raw[0],
-                            "remote_ip"      : _client_raw[1].rsplit(":",1)[0], ## ipv6
-                            "vpn_ip"         : _client_raw[2],
-                            "vpn_ipv6"       : _client_raw[3],
-                            "bytes_received" : int(_client_raw[4]),
-                            "bytes_sent"     : int(_client_raw[5]),
-                            "uptime"         : _now - int(_client_raw[7]),
-                            "username"       : _client_raw[8] if _client_raw[8] != "UNDEF" else _client_raw[0],
-                            "clientid"       : int(_client_raw[9]),
-                            "cipher"         : _client_raw[11].strip("\r\n")
-                        }
-                        if _client["username"].upper() in _monitored_clients:
-                            _monitored_clients[_client["username"].upper()]["current"].append(_client)
+                        _ret.append('2 "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:/{protocol} {expiredate}'.format(**_server))
+                        continue
+                else:
+                    if not _server.get("maxclients"):
+                        _max_clients = ipaddress.IPv4Network(_server.get("tunnel_network")).num_addresses -2
+                        if _server.get("topology_subnet") != "yes" and _server.get("topology") != "subnet":
+                            _max_clients = max(1,int(_max_clients/4)) ## p2p
+                        _server["maxclients"] = _max_clients
+                    try:
+                        try:
+                            
+                            _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
+                                "SRV_{name}".format(**_server),
+                                *(map(lambda x: int(x),re.findall("bytes\w+=(\d+)",self._read_from_openvpnsocket(_server["socket"],"load-stats"))))
+                            )
+                            _server["status"] = 0 if _server["status"] == 3 else _server["status"]
+                        except:
+                            _server["bytesin"], _server["bytesout"] = 0,0
+                            raise
+                        
+                        _number_of_clients = 0
+                        _now = int(time.time())
+                        _response = self._read_from_openvpnsocket(_server["socket"],"status 2")
+                        for _client_match in re.finditer("^CLIENT_LIST,(.*?)$",_response,re.M):
+                            _number_of_clients += 1
+                            _client_raw = list(map(lambda x: x.strip(),_client_match.group(1).split(",")))
+                            _client = {
+                                "server"         : _server.get("name"),
+                                "common_name"    : _client_raw[0],
+                                "remote_ip"      : _client_raw[1].rsplit(":",1)[0], ## ipv6
+                                "vpn_ip"         : _client_raw[2],
+                                "vpn_ipv6"       : _client_raw[3],
+                                "bytes_received" : int(_client_raw[4]),
+                                "bytes_sent"     : int(_client_raw[5]),
+                                "uptime"         : _now - int(_client_raw[7]),
+                                "username"       : _client_raw[8] if _client_raw[8] != "UNDEF" else _client_raw[0],
+                                "clientid"       : int(_client_raw[9]),
+                                "cipher"         : _client_raw[11].strip("\r\n")
+                            }
+                            if _client["username"].upper() in _monitored_clients:
+                                _monitored_clients[_client["username"].upper()]["current"].append(_client)
 
-                    _server["clientcount"] = _number_of_clients
-                    _ret.append('{status} "OpenVPN Server: {name}" connections_ssl_vpn={clientcount};;{maxclients}|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {clientcount}/{maxclients} Connections Port:{local_port}/{protocol} {expiredate}'.format(**_server))
-                except:
-                    _ret.append('2 "OpenVPN Server: {name}" connections_ssl_vpn=0;;{maxclients}|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:{local_port}/{protocol} {expiredate}'.format(**_server))
+                        _server["clientcount"] = _number_of_clients
+                        _ret.append('{status} "OpenVPN Server: {name}" connections_ssl_vpn={clientcount};;{maxclients}|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {clientcount}/{maxclients} Connections Port:{local_port}/{protocol} {expiredate}'.format(**_server))
+                    except:
+                        raise
+                        _ret.append('2 "OpenVPN Server: {name}" connections_ssl_vpn=0;;{maxclients}|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:{local_port}/{protocol} {expiredate}'.format(**_server))
 
         for _client in _monitored_clients.values():
             _current_conn = _client.get("current",[])
@@ -1474,7 +1492,8 @@ class checkmk_checker(object):
             except:
                 raise
         _ret += [f"<<<lnx_packages:sep(124):persist({_persist})>>>"]
-        _ret += list(map(lambda x: "{0}|{1}|amd64|freebsd|{2}|install ok installed".format(*x),re.findall("(\S+)-([0-9][0-9a-z._,-]+)\s*(.*)",self._run_cache_prog("pkg info",1200),re.M)))
+        _system = platform.machine()
+        _ret += list(map(lambda x: f"{{0}}|{{1}}|{_system}|freebsd|{{2}}|install ok installed".format(*x),re.findall("(\S+)-([0-9][0-9a-z._,-]+)\s*(.*)",self._run_cache_prog("pkg info",1200),re.M)))
         return _ret
 
     def _run_prog(self,cmdline="",*args,shell=False,timeout=60,ignore_error=False):
@@ -1554,6 +1573,7 @@ class checkmk_cached_process(object):
         return _data
 
 class checkmk_server(TCPServer,checkmk_checker):
+    address_family = socket.AF_INET6
     def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,expire_inventory=0,tenants=None,**kwargs):
         self.tcp_port = port
         self.pidfile = pidfile
@@ -1600,6 +1620,7 @@ class checkmk_server(TCPServer,checkmk_checker):
         signal.signal(signal.SIGHUP, self._signal_handler)
         self._change_user()
         try:
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, False)
             self.server_bind()
             self.server_activate()
         except:
@@ -1613,7 +1634,8 @@ class checkmk_server(TCPServer,checkmk_checker):
             pass
 
     def cmkclient(self,checkoutput="127.0.0.1",port=None,encrypt=None,**kwargs):
-        _sock = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        _family = socket.AF_INET6 if "AF_INET" not in set(map(lambda x: x[0].name,socket.getaddrinfo(checkoutput,None))) else socket.AF_INET
+        _sock = socket.socket(_family,socket.SOCK_STREAM)
         _sock.settimeout(3)
         try:
             _sock.connect((checkoutput,port))
@@ -2095,8 +2117,6 @@ class checkmk_taskrunner(object):
         _data = []
         _fails = 0
         _task_running_count = len(self._get_running_task_threads())
-        sys.stderr.write("GetDATA\n")
-        sys.stderr.flush()
         with self._mutex:
             sys.stderr.flush()
             if self.err:
@@ -2330,7 +2350,7 @@ if __name__ == "__main__":
         add_help=False,
         formatter_class=SmartFormatter
     )
-    _parser.add_argument("--help",action="store_true",
+    _parser.add_argument("-h","--help",action="store_true",
         help=_("show help message"))
     _parser.add_argument("--start",action="store_true",
         help=_("start the daemon"))
@@ -2363,7 +2383,9 @@ if __name__ == "__main__":
     _parser.add_argument("--zabbix",action="store_true",
         help=_("only output local checks as json for zabbix parsing"))
     _parser.add_argument("--debug",action="store_true",
-        help=_("debug Ausgabe"))
+        help=_("debug output"))
+    _parser.add_argument("--configdebug",action="store_true",
+        help=_("show json config for debugging"))
 
     def _args_error(message):
         print("#"*35)
@@ -2408,7 +2430,7 @@ if __name__ == "__main__":
             _pid = int(re.findall("\s(\d+)\s",_out.split("\n")[1])[0])
         except (IndexError,ValueError):
             pass
-    _active_methods = [getattr(args,x,False) for x in ("start","stop","restart","status","zabbix","nodaemon","debug","update","checkoutput","help")]
+    _active_methods = [getattr(args,x,False) for x in ("start","stop","restart","status","zabbix","nodaemon","debug","configdebug","update","checkoutput","help")]
     if SYSHOOK_METHOD and not any(_active_methods):
         #print(f"SYSHOOK {SYSHOOK_METHOD} - {repr(_active_methods)}")
         log(f"using syshook {SYSHOOK_METHOD[0]}")
@@ -2459,6 +2481,11 @@ if __name__ == "__main__":
 
     elif args.debug:
         sys.stdout.write(_server.do_checks(debug=True).decode(sys.stdout.encoding))
+        sys.stdout.flush()
+
+    elif args.configdebug:
+        sys.stdout.write(json.dumps(_server._config_reader()))
+        sys.stdout.write("\n")
         sys.stdout.flush()
 
     elif args.zabbix:
