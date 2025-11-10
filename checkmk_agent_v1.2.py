@@ -32,7 +32,7 @@
 ##
 
 
-__VERSION__ = "1.2.11"
+__VERSION__ = "1.2.12"
 
 import sys
 import os
@@ -672,20 +672,48 @@ class checkmk_checker(object):
         return _ret
 
     def checklocal_services(self):
+        # Whitelist-Datei automatisch erstellen falls nicht vorhanden
+        _whitelist_file = "/usr/local/etc/checkmk_service_whitelist.conf"
+
+        if not os.path.exists(_whitelist_file):
+            try:
+                with open(_whitelist_file, 'w') as f:
+                    f.write("# CheckMK Service Whitelist\n")
+                    f.write("# Ein Service pro Zeile (Service-Name oder Description)\n")
+                    f.write("# Beispiel:\n")
+                    f.write("# unbound\n")
+                    f.write("# ntopng\n")
+            except Exception:
+                pass  # Fehler beim Erstellen ignorieren
+
+        # Whitelist einlesen
+        _whitelist = set()
+        try:
+            with open(_whitelist_file, 'r') as f:
+                _whitelist = set(line.strip() for line in f if line.strip() and not line.startswith('#'))
+        except FileNotFoundError:
+            pass
+
         _phpcode = '<?php require_once("config.inc");require_once("system.inc"); require_once("plugins.inc"); require_once("util.inc"); foreach(plugins_services() as $_service) { printf("%s;%s;%s\n",$_service["name"],$_service["description"],service_status($_service));} ?>'
-        _proc = subprocess.Popen(["php"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,encoding="utf-8")
-        _data,_ = _proc.communicate(input=_phpcode,timeout=15)
-        _services = []
-        for _service in _data.strip().split("\n"):
-            _services.append(_service.split(";"))
+        _proc = subprocess.Popen(["php"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, encoding="utf-8")
+        _data, _ = _proc.communicate(input=_phpcode, timeout=15)
+
+        _services = [_service.split(";") for _service in _data.strip().split("\n")]
         _num_services = len(_services)
-        _stopped_services = list(filter(lambda x: x[2] != '1',_services))
+
+        # Gestoppte Services ohne Whitelist
+        _stopped_services = [s for s in _services if s[2] != '1' and s[0] not in _whitelist and s[1] not in _whitelist]
+
         _num_stopped = len(_stopped_services)
         _num_running = _num_services - _num_stopped
-        _stopped_services = ", ".join(map(lambda x: x[1],_stopped_services))
+        _num_whitelisted = sum(1 for s in _services if s[2] != '1' and (s[0] in _whitelist or s[1] in _whitelist))
+
+        _stopped_services_str = ", ".join(s[1] for s in _stopped_services)
+
         if _num_stopped > 0:
-            return [f"2 Services running_services={_num_running:.0f}|stopped_service={_num_stopped:.0f} Services: {_stopped_services} not running"]
-        return [f"0 Services running_services={_num_running:.0f}|stopped_service={_num_stopped:.0f} All Services running"]
+            return [f"2 Services running_services={_num_running:.0f}|stopped_services={_num_stopped:.0f}|whitelisted_services={_num_whitelisted:.0f} Services: {_stopped_services_str} not running"]
+
+        return [f"0 Services running_services={_num_running:.0f}|stopped_services={_num_stopped:.0f}|whitelisted_services={_num_whitelisted:.0f} All Services running"]
 
     def checklocal_carpstatus(self):
         _ret = []
