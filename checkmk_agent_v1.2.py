@@ -672,25 +672,23 @@ class checkmk_checker(object):
         return _ret
 
     def checklocal_services(self):
-        # Whitelist-Datei automatisch erstellen falls nicht vorhanden
-        _whitelist_file = "/usr/local/etc/checkmk_service_whitelist.conf"
+        _blacklist_file = "/usr/local/etc/checkmk_service_blacklist.conf"
 
-        if not os.path.exists(_whitelist_file):
+        if not os.path.exists(_blacklist_file):
             try:
-                with open(_whitelist_file, 'w') as f:
-                    f.write("# CheckMK Service Whitelist\n")
-                    f.write("# Ein Service pro Zeile (Service-Name oder Description)\n")
-                    f.write("# Beispiel:\n")
+                with open(_blacklist_file, 'w') as f:
+                    f.write("# CheckMK Service Blacklist\n")
+                    f.write("# One service per line\n")
+                    f.write("# Example:\n")
                     f.write("# unbound\n")
                     f.write("# ntopng\n")
             except Exception:
-                pass  # Fehler beim Erstellen ignorieren
+                pass
 
-        # Whitelist einlesen
-        _whitelist = set()
+        _blacklist = set()
         try:
-            with open(_whitelist_file, 'r') as f:
-                _whitelist = set(line.strip() for line in f if line.strip() and not line.startswith('#'))
+            with open(_blacklist_file, 'r') as f:
+                _blacklist = set(line.strip() for line in f if line.strip() and not line.startswith('#'))
         except FileNotFoundError:
             pass
 
@@ -701,19 +699,18 @@ class checkmk_checker(object):
         _services = [_service.split(";") for _service in _data.strip().split("\n")]
         _num_services = len(_services)
 
-        # Gestoppte Services ohne Whitelist
-        _stopped_services = [s for s in _services if s[2] != '1' and s[0] not in _whitelist and s[1] not in _whitelist]
+        _stopped_services = [s for s in _services if s[2] != '1' and s[0] not in _blacklist and s[1] not in _blacklist]
 
         _num_stopped = len(_stopped_services)
         _num_running = _num_services - _num_stopped
-        _num_whitelisted = sum(1 for s in _services if s[2] != '1' and (s[0] in _whitelist or s[1] in _whitelist))
+        _num_blacklisted = sum(1 for s in _services if s[2] != '1' and (s[0] in _blacklist or s[1] in _blacklist))
 
         _stopped_services_str = ", ".join(s[1] for s in _stopped_services)
 
         if _num_stopped > 0:
-            return [f"2 Services running_services={_num_running:.0f}|stopped_services={_num_stopped:.0f}|whitelisted_services={_num_whitelisted:.0f} Services: {_stopped_services_str} not running"]
+            return [f"2 Services running_services={_num_running:.0f}|stopped_services={_num_stopped:.0f}|blacklisted_services={_num_blacklisted:.0f} Services: {_stopped_services_str} not running"]
 
-        return [f"0 Services running_services={_num_running:.0f}|stopped_services={_num_stopped:.0f}|whitelisted_services={_num_whitelisted:.0f} All Services running"]
+        return [f"0 Services running_services={_num_running:.0f}|stopped_services={_num_stopped:.0f}|blacklisted_services={_num_blacklisted:.0f} All Services running"]
 
     def checklocal_carpstatus(self):
         _ret = []
