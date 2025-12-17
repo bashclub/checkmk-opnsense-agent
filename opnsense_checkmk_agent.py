@@ -945,7 +945,7 @@ class checkmk_checker(object):
                         _ret.append('2 "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:/{protocol} {expiredate}'.format(**_server))
                         continue
                 else:
-                    if not _server.get("maxclients"):
+                    if not _server.get("maxclients") and _server.get("tunnel_network"):
                         _max_clients = ipaddress.IPv4Network(_server.get("tunnel_network")).num_addresses -2
                         if _server.get("topology_subnet") != "yes" and _server.get("topology") != "subnet":
                             _max_clients = max(1,int(_max_clients/4)) ## p2p
