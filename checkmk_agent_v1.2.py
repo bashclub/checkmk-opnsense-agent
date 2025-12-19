@@ -540,7 +540,7 @@ class checkmk_checker(object):
         if self._info.get("business_expire"):
             _days = (self._info.get("business_expire") - datetime.now()).days
             _date = self._info.get("business_expire").strftime("%d.%m.%Y")
-            return [f'P "Business Licence" expiredays={_days};;;30;60; Licence Expire: {_date}']
+            return [f'P "Business Licence" expiredays={_days};30;60; Licence Expire: {_date}']
         return []
 
     def check_label(self):
@@ -916,7 +916,7 @@ class checkmk_checker(object):
                         _server["expiredate"] = "\\n" + _server["expiredate"]
 
                 ## server_tls, p2p_shared_key p2p_tls
-                if _server.get("mode") in ("p2p_shared_key","p2p_tls") or _server.get("topology") == "p2p":
+                if _server.get("mode") in ("p2p_shared_key","p2p_tls") or _server.get("topology") == "p2p" or _server.get("type") == "client":
                     try:
                         
                         _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
@@ -944,7 +944,7 @@ class checkmk_checker(object):
                         _ret.append('2 "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:/{protocol} {expiredate}'.format(**_server))
                         continue
                 else:
-                    if not _server.get("maxclients"):
+                    if not _server.get("maxclients") and _server.get("tunnel_network"):
                         _max_clients = ipaddress.IPv4Network(_server.get("tunnel_network")).num_addresses -2
                         if _server.get("topology_subnet") != "yes" and _server.get("topology") != "subnet":
                             _max_clients = max(1,int(_max_clients/4)) ## p2p
