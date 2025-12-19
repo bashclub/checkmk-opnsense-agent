@@ -1107,6 +1107,7 @@ class checkmk_checker(object):
                 return []
         except:
             return []
+
         _connections_config =  _swanctl_config.get("Connection")
         _childrens_config = self._config_reader().get("OPNsense").get("Swanctl").get("children")
         if type(_connections_config) != list:
@@ -1166,7 +1167,6 @@ class checkmk_checker(object):
                     _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not running".format(**_con))
             else:
                 _con["status"] = max(_con["status"],1)
-                _con["phase2"] = f"{_children_up}/{_required_phase2}"
                 _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {phase2} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
         return _ret
 
