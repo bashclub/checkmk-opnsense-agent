@@ -535,7 +535,7 @@ class checkmk_checker(object):
         if self._info.get("business_expire"):
             _days = (self._info.get("business_expire") - datetime.now()).days
             _date = self._info.get("business_expire").strftime("%d.%m.%Y")
-            return [f'P "Business Licence" expiredays={_days};60:;30:; Licence Expire: {_date}']
+            return [f'P "Business Licence" expiredays={_days};60:;30: Licence Expire: {_date}']
         return []
 
     def check_label(self):
