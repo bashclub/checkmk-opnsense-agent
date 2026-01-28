@@ -400,12 +400,25 @@ class checkmk_checker(object):
 
     def _getosinfo(self):
         _info = json.load(open("/usr/local/opnsense/version/core","r"))
-        _changelog = json.load(open("/usr/local/opnsense/changelog/index.json","r"))
         _config_modified = os.stat("/conf/config.xml").st_mtime
+        
+        # Try to load changelog, handle empty or missing file
+        _changelog = []
+        try:
+            with open("/usr/local/opnsense/changelog/index.json","r") as _changelog_file:
+                _changelog_content = _changelog_file.read().strip()
+                if _changelog_content:  # Check if file is not empty
+                    _changelog = json.loads(_changelog_content)
+                    if not isinstance(_changelog, list):
+                        _changelog = []
+        except (FileNotFoundError, json.JSONDecodeError, ValueError):
+            log("changelog file not found or empty, using fallback values", "warning")
+            _changelog = []
+        
         try:
             _default_version = {'series': _info.get("product_series"), 'version': _info.get("product_version"), 'date': time.strftime('%B %d, %Y')}
-            _latest_series = dict(map(lambda x: (x.get("series"),x),_changelog))
-            _latest_versions = dict(map(lambda x: (x.get("version"),x),_changelog))
+            _latest_series = dict(map(lambda x: (x.get("series"),x),_changelog)) if _changelog else {}
+            _latest_versions = dict(map(lambda x: (x.get("version"),x),_changelog)) if _changelog else {}
             _latest_firmware = _latest_series.get(_info.get("product_series"),_default_version)
             _current_firmware = _latest_versions.get(_info.get("product_version").split("_")[0],_default_version).copy()
             _current_firmware["age"] = int(time.time() - time.mktime(time.strptime(_current_firmware.get("date"),"%B %d, %Y")))
@@ -422,8 +435,8 @@ class checkmk_checker(object):
             _current_firmware["version"] = _upgrade_packages.get("opnsense").get("current_version")
             _latest_firmware["version"] = _upgrade_packages.get("opnsense").get("new_version")
         except:
-            _current_firmware["version"] = _current_firmware["version"].split("_")[0]
-            _latest_firmware["version"] = _current_firmware["version"] ## fixme ## no upgradepckg error on opnsense ... no new version
+            _current_firmware["version"] = _current_firmware.get("version", _info.get("product_version")).split("_")[0]
+            _latest_firmware["version"] = _current_firmware.get("version", _info.get("product_version"))  ## fixme ## no upgradepckg error on opnsense ... no new version
         self._info = {
             "os"                : _info.get("product_name"),
             "os_version"        : _current_firmware.get("version","unknown"),
