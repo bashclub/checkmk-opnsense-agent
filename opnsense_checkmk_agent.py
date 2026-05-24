@@ -23,7 +23,7 @@
 ##
 ##  default config file /usr/local/etc/checkmk.conf
 ##
-## for server-side implementation of 
+## for server-side implementation of
 ##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
@@ -129,8 +129,8 @@ def log(message,prio="notice"):
         "crit"      :syslog.LOG_CRIT,
         "err"       :syslog.LOG_ERR,
         "warning"   :syslog.LOG_WARNING,
-        "notice"    :syslog.LOG_NOTICE, 
-        "info"      :syslog.LOG_NOTICE, 
+        "notice"    :syslog.LOG_NOTICE,
+        "info"      :syslog.LOG_INFO,
     }.get(str(prio).lower(),syslog.LOG_DEBUG)
     syslog.openlog(ident="checkmk_agent",logoption=syslog.LOG_PID | syslog.LOG_NDELAY,facility=syslog.LOG_DAEMON)
     syslog.syslog(priority,message)
@@ -313,7 +313,7 @@ class checkmk_checker(object):
                 _lines += self.do_inventory()
             except:
                 _errors.append(traceback.format_exc())
-            
+
 
         _lines.append("<<<local:sep(0)>>>")
         for _check in dir(self):
@@ -481,7 +481,7 @@ class checkmk_checker(object):
             except:
                 pass
             self._certificate_store[_cert.get("refid")] = _cert
-            
+
     def _get_certificate(self,refid):
         if time.time() - self._certificate_timestamp > 3600:
             self._certificate_parser()
@@ -516,7 +516,7 @@ class checkmk_checker(object):
             _desc = _interface.get("descr")
             _ifs[_interface.get("if","_")] = _desc if _desc else _name.upper()
 
-        try: 
+        try:
             _wgserver = self._config_reader().get("OPNsense").get("wireguard").get("server").get("servers").get("server")
             if type(_wgserver) == dict:
                 _wgserver = [_wgserver]
@@ -596,7 +596,7 @@ class checkmk_checker(object):
                 if _key == "flags":
                     _interface_dict["flags"] = int(re.findall(r"^[a-f\d]+",_val)[0],16)
                     ## hack pppoe no status active or pppd pid
-                    if _interface.lower().startswith("pppoe") and _interface_dict["flags"] & 0x10 and  _interface_dict["flags"] & 0x1: 
+                    if _interface.lower().startswith("pppoe") and _interface_dict["flags"] & 0x10 and  _interface_dict["flags"] & 0x1:
                         _interface_dict["up"] = "true"
                     ## http://web.mit.edu/freebsd/head/sys/net/if.h
                     ## 0x1 UP
@@ -722,9 +722,9 @@ class checkmk_checker(object):
             return []
         _ret = ["<<<isc_dhcpd>>>"]
         _ret.append("[general]\nPID: {0}".format(self.pidof("dhcpd",-1)))
-        
+
         _dhcpleases = open("/var/dhcpd/var/db/dhcpd.leases","r").read()
-        ## FIXME 
+        ## FIXME
         #_dhcpleases_dict = dict(map(lambda x: (self.ip2int(x[0]),x[1]),re.findall(r"lease\s(?P<ipaddr>[0-9.]+)\s\{.*?.\n\s+binding state\s(?P<state>\w+).*?\}",_dhcpleases,re.DOTALL)))
         _dhcpleases_dict = dict(re.findall(r"lease\s(?P<ipaddr>[0-9.]+)\s\{.*?.\n\s+binding state\s(?P<state>active).*?\}",_dhcpleases,re.DOTALL))
         _ret.append("[pools]")
@@ -877,7 +877,7 @@ class checkmk_checker(object):
             _cso = [_cso]
         if type(_cso) == list:
             _monitored_clients = dict(map(lambda x: (x.get("common_name").upper(),dict(x,current=[])),_cso))
-            
+
         _now = time.time()
         _cfn_instances = _cfn.get("Instances")
         if type(_cfn_instances) == dict:
@@ -919,7 +919,7 @@ class checkmk_checker(object):
                 ## server_tls, p2p_shared_key p2p_tls
                 if _server.get("mode") in ("p2p_shared_key","p2p_tls") or _server.get("topology") == "p2p":
                     try:
-                        
+
                         _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
                             "SRV_{name}".format(**_server),
                             *(map(lambda x: int(x),re.findall(r"bytes\w+=(\d+)",self._read_from_openvpnsocket(_server["socket"],"load-stats"))))
@@ -952,7 +952,7 @@ class checkmk_checker(object):
                         _server["maxclients"] = _max_clients
                     try:
                         try:
-                            
+
                             _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
                                 "SRV_{name}".format(**_server),
                                 *(map(lambda x: int(x),re.findall(r"bytes\w+=(\d+)",self._read_from_openvpnsocket(_server["socket"],"load-stats"))))
@@ -961,7 +961,7 @@ class checkmk_checker(object):
                         except:
                             _server["bytesin"], _server["bytesout"] = 0,0
                             raise
-                        
+
                         _number_of_clients = 0
                         _now = int(time.time())
                         _response = self._read_from_openvpnsocket(_server["socket"],"status 2")
@@ -1082,7 +1082,7 @@ class checkmk_checker(object):
                     _con["bytes-sent"] += int(int(_child.get("bytes-out","0")) /_install_time)
                     _con["life-time"] = max(_con["life-time"],_install_time)
                     _con["status"] = 0 if _con["status"] != 1 else 1
-                    
+
             #_required_phase2 = len(list(filter(lambda x: x.get("ikeid") == _ikeid,_phase2config)))
 
             #if _phase2_up >= _required_phase2:
@@ -1208,7 +1208,7 @@ class checkmk_checker(object):
         if _config.get("general",{}).get("enabled") != "1":
             return []
 
-        try:        
+        try:
             _data = self._read_nginx_socket()
         except (requests.exceptions.ConnectionError,FileNotFoundError):
             _data = {}
@@ -1231,7 +1231,7 @@ class checkmk_checker(object):
             _location_config = [_location_config] if _location_config else []
 
         _upstream_data = _data.get("upstreamZones",{})
-        
+
         for _location in _location_config:
             _upstream = _upstream_config.get(_location.get("upstream","__"))
             _location["upstream_name"] = ""
@@ -1289,7 +1289,7 @@ class checkmk_checker(object):
                 if not _sockdata:
                     break
                 _data += _sockdata.decode("utf-8")
-            
+
             for _line in _data.split("\n"):
                 _linedata = _line.split(",")
                 if len(_linedata) < 33:
@@ -1367,7 +1367,7 @@ class checkmk_checker(object):
         if _cpu_temperatures:
             _cpu_temperature = int(max(_cpu_temperatures) * 1000)
             _ret.append(f"CPU|enabled|unknown|{_cpu_temperature}")
-        
+
         _count = 0
         for _tempsensor in self._available_sysctl_temperature_list:
             _out = self._run_prog(f"sysctl -n {_tempsensor}",timeout=10)
@@ -1703,7 +1703,7 @@ class checkmk_server(TCPServer,checkmk_checker):
                 os.remove(self.pidfile)
             except:
                 pass
-        
+
     @staticmethod
     def _redirect_stream(system_stream,target_stream):
         if target_stream is None:
@@ -1888,7 +1888,7 @@ class checkmk_task(object):
         _results = []
         for _port in re.finditer(r"<port protocol=\"(?P<proto>tcp|udp)\"\sportid=\"(?P<port>\d+)\".*?state=\"(?P<state>[\w|]+)\"\sreason=\"(?P<reason>[\w-]+)\"(?:.*?name=\"(?P<protoname>[\w-]+)\")*.*</port>",_data):
             _results.append(_port.groupdict())
-        
+
         _ret = {
             "host"      : host,
             "service"   : service,
@@ -1910,7 +1910,7 @@ class checkmk_task(object):
         if not self.piggyback:
             self.piggyback = host
         _data = ""
-        
+
 
     def _speedtest(self):
         pass
@@ -2000,7 +2000,7 @@ class checkmk_task(object):
             sys.stderr.write(f"getdata-{self.id}\n")
             sys.stderr.flush()
             return self._data
-        
+
     def __repr__(self):
             _next = self.nextrun - time.time()
             return f"{self.id}: {_next}"
@@ -2107,13 +2107,13 @@ class checkmk_taskrunner(object):
         self.isrunning = True
         self._queue = []
         self.err = None
-        self._event = threading.Event()        
+        self._event = threading.Event()
 
     def start(self):
         _t = threading.Thread(target=self._run_forever,name="cmk_taskrunner")
         _t.daemon = True
         _t.start()
-        
+
     def get_data(self,tenant=None):
         _data = []
         _fails = 0
@@ -2179,7 +2179,7 @@ class checkmk_taskrunner(object):
         for _task in self._queue:
             if _task.id not in _ids:
                 self._queue.remove(_task)
-        #self._queue = list(filter(lambda x: x.id in _ids,self._queue)) ## remove config if file removed or disabled 
+        #self._queue = list(filter(lambda x: x.id in _ids,self._queue)) ## remove config if file removed or disabled
         #pprint(self._queue)
 
     def _get_running_task_threads(self):
@@ -2321,7 +2321,7 @@ class smart_disc(object):
                 _status = "SMART Health Status:  PREFAIL"
             if e.returncode & 0x3:
                 _status = "SMART Health Status:  DISK FAILING"
-                
+
             self._smartctl_output += f"\n{_status}\n"
         except subprocess.TimeoutExpired:
             self._smartctl_output += "\nSMART smartctl Timeout\n"
@@ -2335,7 +2335,7 @@ class smart_disc(object):
         if not getattr(self,"model_family",None):
             self.model_type = getattr(self,"model_type","unknown")
         for _k,_v in self.__dict__.items():
-            if _k.startswith("_") or _k in ("device"): 
+            if _k.startswith("_") or _k in ("device"):
                 continue
             _ret.append(f"{self.device}|{_k}|{_v}")
         return "\n".join(_ret)
@@ -2345,7 +2345,7 @@ if __name__ == "__main__":
     class SmartFormatter(argparse.HelpFormatter):
         def _split_lines(self, text, width):
             if text.startswith('R|'):
-                return text[2:].splitlines()  
+                return text[2:].splitlines()
             # this is the RawTextHelpFormatter._split_lines
             return argparse.HelpFormatter._split_lines(self, text, width)
     _checks_available = sorted(list(map(lambda x: x.split("_")[1],filter(lambda x: x.startswith("check_") or x.startswith("checklocal_"),dir(checkmk_checker)))))
@@ -2536,7 +2536,7 @@ if __name__ == "__main__":
             if _answer in ("Y","y","yes","j","J"):
                 with open(_script_location,"wb") as _f:
                     _f.write(_new_script.encode("utf-8"))
-                
+
                 print(f"updated to Version {_new_version}")
                 if _pid > 0:
                     try:
