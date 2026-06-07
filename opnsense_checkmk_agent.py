@@ -54,6 +54,7 @@ import traceback
 import syslog
 import requests
 import hashlib
+import csv
 from urllib3.connection import HTTPConnection
 from urllib3.connectionpool import HTTPConnectionPool
 from requests.adapters import HTTPAdapter
@@ -448,7 +449,7 @@ class checkmk_checker(object):
         return socket.inet_ntoa(struct.pack("!I",intaddr))
 
     def pidof(self,prog,default=None):
-        _allprogs = re.findall(r"(\w+)\s+(\d+)",self._run_prog("ps ax -c -o command,pid"))
+        _allprogs = re.findall(r"([\w.-]+)\s+(\d+)",self._run_prog("ps ax -c -o command,pid"))
         return int(dict(_allprogs).get(prog,default))
 
     def _config_reader(self,config=""):
@@ -717,22 +718,39 @@ class checkmk_checker(object):
         return _ret
 
     def check_dhcp(self):
-        _dhcp = self._config_reader().get("dhcpd")
-        if  type(_dhcp) != dict or not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
+        _pools = set()
+        _leases = set()
+        _pools.update(self._isc_dhcp_pools())
+        _leases.update(self._isc_active_leases4())
+        _pools.update(self._kea_config_pools())
+        _leases.update(self._kea_active_leases4())
+
+        if not _pools and not _leases:
             return []
+
+        _dhcpd_pid = self.pidof("dhcpd",-1)
+        _kea_pid = self.pidof("kea-dhcp4",-1)
         _ret = ["<<<isc_dhcpd>>>"]
-        _ret.append("[general]\nPID: {0}".format(self.pidof("dhcpd",-1)))
-        
-        _dhcpleases = open("/var/dhcpd/var/db/dhcpd.leases","r").read()
-        ## FIXME 
-        #_dhcpleases_dict = dict(map(lambda x: (self.ip2int(x[0]),x[1]),re.findall(r"lease\s(?P<ipaddr>[0-9.]+)\s\{.*?.\n\s+binding state\s(?P<state>\w+).*?\}",_dhcpleases,re.DOTALL)))
-        _dhcpleases_dict = dict(re.findall(r"lease\s(?P<ipaddr>[0-9.]+)\s\{.*?.\n\s+binding state\s(?P<state>active).*?\}",_dhcpleases,re.DOTALL))
+        _ret.append("[general]\nPID: {0}".format(_dhcpd_pid if _dhcpd_pid > -1 else _kea_pid))
         _ret.append("[pools]")
+        for _start, _end in sorted(_pools,key=lambda x: int(ipaddress.IPv4Address(x[0]))):
+            _ret.append("{0}\t{1}".format(_start,_end))
+        _ret.append("[leases]")
+        for _ipaddr in sorted(_leases,key=lambda x: int(ipaddress.IPv4Address(x))):
+            _ret.append(_ipaddr)
+        return _ret
+
+    def _isc_dhcp_pools(self):
+        _ret = []
+        _dhcp = self._config_reader().get("dhcpd")
+        if type(_dhcp) != dict:
+            return _ret
         for _dhcpsetting in _dhcp.values():
-            if _dhcpsetting.get("enable") != "1":
+            if type(_dhcpsetting) != dict or _dhcpsetting.get("enable") != "1":
                 continue
             _range = _dhcpsetting.get("range",{"from":"127.0.0.2","to":"127.0.0.2"})
-            _ret.append("{from}\t{to}".format(**_range))
+            if _range.get("from") and _range.get("to"):
+                _ret.append((_range.get("from"),_range.get("to")))
             _pools = _dhcpsetting.get("pool")
             if not _pools:
                 continue
@@ -740,11 +758,106 @@ class checkmk_checker(object):
                 _pools = [_pools]
             for _pool in _pools:
                 _range = _pool.get("range",{"from":"127.0.0.2","to":"127.0.0.2"})
-                _ret.append("{from}\t{to}".format(**_range))
+                if _range.get("from") and _range.get("to"):
+                    _ret.append((_range.get("from"),_range.get("to")))
+        return _ret
 
+    def _isc_active_leases4(self):
+        if not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
+            return []
+        _dhcpleases = open("/var/dhcpd/var/db/dhcpd.leases","r").read()
+        return re.findall(r"lease\s(?P<ipaddr>[0-9.]+)\s\{.*?.\n\s+binding state\sactive.*?\}",_dhcpleases,re.DOTALL)
+
+    def _check_isc_dhcp4(self):
+        _dhcp = self._config_reader().get("dhcpd")
+        if  type(_dhcp) != dict or not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
+            return []
+        _ret = ["<<<isc_dhcpd>>>"]
+        _ret.append("[general]\nPID: {0}".format(self.pidof("dhcpd",-1)))
+        _ret.append("[pools]")
+        for _start, _end in self._isc_dhcp_pools():
+            _ret.append("{0}\t{1}".format(_start,_end))
         _ret.append("[leases]")
-        for _ip in sorted(_dhcpleases_dict.keys()):
+        for _ip in sorted(self._isc_active_leases4()):
             _ret.append(_ip)
+        return _ret
+
+    @staticmethod
+    def _kea_pool_range(pool):
+        if type(pool) == str:
+            _pool = pool.strip()
+        elif type(pool) == dict:
+            _pool = str(pool.get("pool","")).strip()
+        else:
+            return None
+        if not _pool:
+            return None
+        if "/" in _pool:
+            try:
+                _network = ipaddress.ip_network(_pool,strict=False)
+                _hosts = list(_network.hosts())
+                if _hosts:
+                    return str(_hosts[0]),str(_hosts[-1])
+                return str(_network.network_address),str(_network.broadcast_address)
+            except:
+                return None
+        _pool = re.sub(r"\s+", "",_pool)
+        if "-" in _pool:
+            _start, _end = _pool.split("-",1)
+            return _start,_end
+        return None
+
+    def _kea_config_pools(self,config_file="/usr/local/etc/kea/kea-dhcp4.conf"):
+        _ret = []
+        try:
+            _kea_config = json.load(open(config_file,"r"))
+        except:
+            return _ret
+        _subnets = _kea_config.get("Dhcp4",{}).get("subnet4",[])
+        if type(_subnets) != list:
+            _subnets = [_subnets]
+        for _subnet in _subnets:
+            for _pool in _subnet.get("pools",[]):
+                _range = self._kea_pool_range(_pool)
+                if _range:
+                    _ret.append(_range)
+        return _ret
+
+    def _kea_active_leases4(self):
+        _ret = {}
+        _now = int(time.time())
+        for _lease_file in glob.glob("/var/db/kea/kea-leases4.csv*"):
+            if not os.path.isfile(_lease_file) or _lease_file.endswith((".pid",".completed")):
+                continue
+            try:
+                with open(_lease_file,"r",newline="") as _csv_file:
+                    for _lease in csv.DictReader(_csv_file):
+                        _ipaddr = _lease.get("address")
+                        if not _ipaddr:
+                            continue
+                        try:
+                            _state = int(_lease.get("state","0") or 0)
+                            _expire = int(_lease.get("expire","0") or 0)
+                        except:
+                            continue
+                        if _state == 0 and (_expire == 0 or _expire > _now):
+                            _ret[_ipaddr] = _expire
+            except:
+                pass
+        return _ret
+
+    def _check_kea_dhcp4(self):
+        _config_file = "/usr/local/etc/kea/kea-dhcp4.conf"
+        if not os.path.exists(_config_file) and not glob.glob("/var/db/kea/kea-leases4.csv*"):
+            return []
+        _ret = ["<<<isc_dhcpd>>>"]
+        _ret.append("[general]\nPID: {0}".format(self.pidof("kea-dhcp4",-1)))
+        _ret.append("[pools]")
+        for _start, _end in self._kea_config_pools(_config_file):
+            _ret.append("{0}\t{1}".format(_start,_end))
+        _ret.append("[leases]")
+        for _ipaddr in sorted(self._kea_active_leases4(),key=lambda x: int(ipaddress.IPv4Address(x))):
+            _ret.append(_ipaddr)
         return _ret
 
     def check_squid(self):
@@ -1137,6 +1250,214 @@ class checkmk_checker(object):
             if _client.get("status") == 2 and _client.get("endpoint") != "":
                 _client["endpoint"] = "last IP:" + _client["endpoint"]
             _ret.append('{status} "WireGuard Client: {name}" if_in_octets={bytes_received}|if_out_octets={bytes_sent} {interface}: {endpoint} - {tunneladdress}'.format(**_client))
+
+        return _ret
+
+    @staticmethod
+    def _checkmk_quote(value):
+        return str(value if value not in (None,"") else "unknown").replace('"',"'").strip()
+
+    @staticmethod
+    def _first_dict_value(data,*keys,default=""):
+        if type(data) != dict:
+            return default
+        for _key in keys:
+            if _key in data and data.get(_key) not in (None,""):
+                return data.get(_key)
+        return default
+
+    @staticmethod
+    def _parse_netbird_bytes(value):
+        if type(value) in (int,float):
+            return int(value)
+        if type(value) != str:
+            return 0
+        _match = re.search(r"([\d.]+)\s*([KMGTPE]?i?B)?",value.strip(),re.I)
+        if not _match:
+            return 0
+        _number = float(_match.group(1))
+        _unit = (_match.group(2) or "B").lower()
+        _factor = {
+            "b": 1,
+            "kb": 1000,
+            "mb": 1000 ** 2,
+            "gb": 1000 ** 3,
+            "tb": 1000 ** 4,
+            "kib": 1024,
+            "mib": 1024 ** 2,
+            "gib": 1024 ** 3,
+            "tib": 1024 ** 4,
+        }.get(_unit,1)
+        return int(_number * _factor)
+
+    @staticmethod
+    def _parse_netbird_latency(value):
+        if type(value) in (int,float):
+            if value > 10000:
+                return float(value) / 1_000_000.0
+            return float(value)
+        if type(value) != str:
+            return 0
+        _match = re.search(r"([\d.]+)\s*(ms|s)?",value.strip(),re.I)
+        if not _match:
+            return 0
+        _latency = float(_match.group(1))
+        if (_match.group(2) or "").lower() == "s":
+            _latency *= 1000
+        return _latency
+
+    @staticmethod
+    def _parse_netbird_timestamp(value):
+        if type(value) in (int,float):
+            return int(value)
+        if type(value) != str or not value.strip() or value.startswith("0001-01-01"):
+            return 0
+        try:
+            return int(datetime.fromisoformat(value.replace("Z","+00:00")).timestamp())
+        except:
+            return 0
+
+    @staticmethod
+    def _netbird_state_label(value):
+        if type(value) == dict:
+            if value.get("connected") == True:
+                return "Connected"
+            if value.get("error"):
+                return "Error"
+            if value.get("connected") == False:
+                return "Disconnected"
+            return "unknown"
+        if type(value) == bool:
+            return "Connected" if value else "Disconnected"
+        return str(value if value not in (None,"") else "unknown")
+
+    @staticmethod
+    def _first_existing_executable(*candidates):
+        for _candidate in candidates:
+            if os.path.isabs(_candidate) and os.path.exists(_candidate) and os.access(_candidate,os.X_OK):
+                return _candidate
+        return candidates[-1]
+
+    def _netbird_wg_dump(self):
+        _ret = {}
+        _wg_bin = self._first_existing_executable("/usr/local/bin/wg","/usr/bin/wg","wg")
+        try:
+            _dump = self._run_prog([_wg_bin,"show","all","dump"],timeout=10).strip()
+        except FileNotFoundError:
+            return _ret
+        for _line in _dump.split("\n"):
+            _values = _line.split("\t")
+            if len(_values) != 9:
+                continue
+            _ret[_values[1].strip()] = {
+                "interface": _values[0].strip(),
+                "endpoint": _values[3].strip(),
+                "last_handshake": int(_values[5].strip() or 0),
+                "bytes_received_total": int(_values[6].strip() or 0),
+                "bytes_sent_total": int(_values[7].strip() or 0),
+            }
+        return _ret
+
+    def _netbird_peer_list(self,netbird_status):
+        _peers = netbird_status.get("peers",[])
+        if type(_peers) == dict:
+            _peers = _peers.get("details",_peers.get("peers",list(_peers.values())))
+        if type(_peers) == dict:
+            _peers = list(_peers.values())
+        if type(_peers) != list:
+            return []
+        return list(filter(lambda x: type(x) == dict,_peers))
+
+    def checklocal_netbird(self):
+        _netbird_bin = self._first_existing_executable("/usr/local/bin/netbird","/usr/bin/netbird","netbird")
+        try:
+            _status_raw = self._run_prog([_netbird_bin,"status","--json"],timeout=20,ignore_error=True).strip()
+        except FileNotFoundError:
+            return []
+        if not _status_raw:
+            if os.path.isabs(_netbird_bin):
+                return ['2 "NetBird" netbird_peers_connected=0|netbird_peers_total=0 netbird status returned no data']
+            return []
+        try:
+            _status = json.loads(_status_raw)
+        except:
+            return ['2 "NetBird" netbird_peers_connected=0|netbird_peers_total=0 Unable to parse netbird status JSON']
+
+        _peers = self._netbird_peer_list(_status)
+        _wg_peers = self._netbird_wg_dump()
+        _daemon_state = self._netbird_state_label(self._first_dict_value(_status,"status","daemonStatus","daemon_state",default="unknown"))
+        _management_state = self._netbird_state_label(self._first_dict_value(_status,"managementState","management","managementStatus",default="unknown"))
+        _signal_state = self._netbird_state_label(self._first_dict_value(_status,"signalState","signal","signalStatus",default="unknown"))
+        _peer_summary = _status.get("peers",{}) if type(_status.get("peers")) == dict else {}
+        _connected_count = int(_peer_summary.get("connected",len(list(filter(lambda x: str(self._first_dict_value(x,"connectionStatus","status",default="")).lower() == "connected",_peers)))))
+        _total_count = int(_peer_summary.get("total",len(_peers)))
+        _relayed_count = len(list(filter(lambda x: str(self._first_dict_value(x,"connType","connectionType",default="")).lower() == "relayed",_peers)))
+        _summary_status = 0
+        if str(_daemon_state).lower() != "connected":
+            _summary_status = 2
+        elif str(_management_state).lower().startswith(("disconnected","error","failed")) or str(_signal_state).lower().startswith(("disconnected","error","failed")):
+            _summary_status = 1
+        _ret = [
+            '{0} "NetBird" netbird_peers_connected={1}|netbird_peers_total={2}|netbird_peers_relayed={3} Daemon:{4} Management:{5} Signal:{6}'.format(
+                _summary_status,
+                _connected_count,
+                _total_count,
+                _relayed_count,
+                self._checkmk_quote(_daemon_state),
+                self._checkmk_quote(_management_state),
+                self._checkmk_quote(_signal_state)
+            )
+        ]
+
+        for _peer in _peers:
+            _pubkey = self._first_dict_value(_peer,"pubKey","publicKey","pub_key","public_key")
+            _wg_peer = _wg_peers.get(_pubkey,{})
+            _name = self._first_dict_value(_peer,"fqdn","hostname","name","dnsLabel","netbirdIp","ip",default=_pubkey[:12] if _pubkey else "unknown")
+            _ipaddr = self._first_dict_value(_peer,"netbirdIp","netbirdIP","ip","IP",default="-")
+            _connection_status = self._first_dict_value(_peer,"connectionStatus","status",default="unknown")
+            _connection_type = self._first_dict_value(_peer,"connType","connectionType",default="-")
+            _latency = self._parse_netbird_latency(self._first_dict_value(_peer,"latency","latencyMs",default=0))
+            _last_handshake = self._parse_netbird_timestamp(self._first_dict_value(_peer,"lastHandshake","lastWireguardHandshake","lastWireGuardHandshake",default=0))
+            if not _last_handshake:
+                _last_handshake = _wg_peer.get("last_handshake",0)
+            _handshake_age = 0 if not _last_handshake else int(time.time() - _last_handshake)
+
+            _bytes_received_total = self._parse_netbird_bytes(self._first_dict_value(_peer,"transferReceived","bytesReceived","bytesRx","rxBytes","receivedBytes",default=0))
+            _bytes_sent_total = self._parse_netbird_bytes(self._first_dict_value(_peer,"transferSent","bytesSent","bytesTx","txBytes","sentBytes",default=0))
+            if not _bytes_received_total and not _bytes_sent_total:
+                _transfer = self._first_dict_value(_peer,"transferStatus","transfer","transferStatusReceivedSent",default="")
+                if type(_transfer) == str and "/" in _transfer:
+                    _bytes_received_total, _bytes_sent_total = map(self._parse_netbird_bytes,_transfer.split("/",1))
+            if not _bytes_received_total and not _bytes_sent_total and _wg_peer:
+                _bytes_received_total = _wg_peer.get("bytes_received_total",0)
+                _bytes_sent_total = _wg_peer.get("bytes_sent_total",0)
+            _bytes_received, _bytes_sent = self._get_traffic("netbird",_pubkey or _name,_bytes_received_total,_bytes_sent_total)
+
+            _status_text = str(_connection_status).lower()
+            if _status_text == "connected":
+                _service_status = 0
+                if _last_handshake and _handshake_age > 300:
+                    _service_status = 1
+            elif _status_text in ("connecting","idle"):
+                _service_status = 1
+            else:
+                _service_status = 2
+
+            _details = "{0} {1} {2}".format(_connection_status,_connection_type,_ipaddr)
+            if _wg_peer.get("interface"):
+                _details += " {0}".format(_wg_peer.get("interface"))
+            if _last_handshake:
+                _details += " handshake_age={0}s".format(_handshake_age)
+            _ret.append('{0} "NetBird Peer: {1}" netbird_connected={2}|latency={3}|connectiontime={4}|if_in_octets={5}|if_out_octets={6} {7}'.format(
+                _service_status,
+                self._checkmk_quote(_name),
+                1 if _status_text == "connected" else 0,
+                _latency,
+                _handshake_age,
+                _bytes_received,
+                _bytes_sent,
+                self._checkmk_quote(_details)
+            ))
 
         return _ret
 
