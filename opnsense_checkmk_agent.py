@@ -1109,15 +1109,33 @@ class checkmk_checker(object):
             _clients = dict(map(lambda x: (x.get("pubkey"),x),_clients))
         except:
             return []
+        try:
+            _servers = self._config_reader().get("OPNsense").get("wireguard").get("server").get("servers").get("server")
+            if type(_servers) != list:
+                _servers = [_servers] if _servers else []
+        except:
+            _servers = None
+
+        _active_peers = {} ## peer uuid -> interface of an enabled instance
+        for _server in _servers or []:
+            if _server.get("enabled") != "1":
+                continue
+            for _uuid in (_server.get("peers") or "").split(","):
+                _active_peers.setdefault(_uuid.strip(),"wg{}".format(_server.get("instance")))
 
         _now = time.time()
-        for _client in _clients.values(): ## fill defaults
-            _client["interface"] = ""
+        for _pubkey, _client in list(_clients.items()): ## fill defaults
+            if _client.get("enabled") == "0" or (_servers is not None and _client.get("@uuid") not in _active_peers):
+                del _clients[_pubkey] ## peer disabled or not used by an enabled instance
+                continue
+            _client["interface"] = _active_peers.get(_client.get("@uuid"),"")
             _client["endpoint"]  = ""
             _client["last_handshake"]  = 0
             _client["bytes_received"]  = 0
             _client["bytes_sent"] = 0
-            _client["status"] = 2
+            _client["loaded"] = False
+            ## without endpoint address (roadwarrior) only the peer itself can connect, so being disconnected is no error
+            _client["dialin"] = not _client.get("serveraddress")
 
         _dump = self._run_prog(["wg","show","all","dump"]).strip()
         for _line in _dump.split("\n"):
@@ -1131,12 +1149,25 @@ class checkmk_checker(object):
             _client["endpoint"]  = _values[3].strip().rsplit(":",1)[0]
             _client["last_handshake"]  = int(_values[5].strip())
             _client["bytes_received"], _client["bytes_sent"]  = self._get_traffic("wireguard",_values[0].strip(),int(_values[6].strip()),int(_values[7].strip()))
-            _client["status"] = 2 if _now - _client["last_handshake"] > 300 else 0  ## 5min timeout
+            _client["loaded"] = True
 
         for _client in _clients.values():
-            if _client.get("status") == 2 and _client.get("endpoint") != "":
-                _client["endpoint"] = "last IP:" + _client["endpoint"]
-            _ret.append('{status} "WireGuard Client: {name}" if_in_octets={bytes_received}|if_out_octets={bytes_sent} {interface}: {endpoint} - {tunneladdress}'.format(**_client))
+            if not _client["loaded"]:
+                _client["status"] = 2
+                _client["state"] = "peer not loaded"
+            ## wireguard drops a session 180s after the last handshake; tunnels keep 5min to avoid flapping
+            elif _now - _client["last_handshake"] <= (180 if _client["dialin"] else 300):
+                _client["status"] = 0
+                _client["state"] = "online, IP:{0}".format(_client["endpoint"])
+            else:
+                _client["status"] = 0 if _client["dialin"] else 2
+                if _client["last_handshake"] == 0:
+                    _client["state"] = "offline, no handshake since start"
+                else:
+                    _age = int(_now - _client["last_handshake"])
+                    _age = "{0}d {1}h".format(_age // 86400,_age % 86400 // 3600) if _age >= 86400 else "{0}h {1}m".format(_age // 3600,_age % 3600 // 60)
+                    _client["state"] = "offline, last handshake {0} ago, last IP:{1}".format(_age,_client["endpoint"])
+            _ret.append('{status} "WireGuard Client: {name}" if_in_octets={bytes_received}|if_out_octets={bytes_sent} {interface}: {state} - {tunneladdress}'.format(**_client))
 
         return _ret
 
