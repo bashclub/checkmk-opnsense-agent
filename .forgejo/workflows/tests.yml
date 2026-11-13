@@ -1,0 +1,19 @@
+# Unit-Tests ohne OPNsense: config.xml, Programmausgaben und Sockets kommen aus tests/ (siehe tests/harness.py).
+# Debian 13 hat Python 3.13 wie OPNsense 26.x.
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unittest:
+    runs-on: debian-13
+    steps:
+      - uses: https://code.bashclub.org/bashclub/ci-tools/setup-distro@v1
+      - uses: actions/checkout@v4
+      - name: Abhängigkeiten
+        run: DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 python3-cryptography python3-requests
+      - name: Tests
+        run: python3 -m unittest discover -s tests -v

@@ -23,6 +23,15 @@ chmod +x /usr/local/etc/rc.syshook.d/start/99-checkmk_agent
 
 Ensure you create a packet filter rule to allow connections from your checkmk server to the firewall on port 6556.
 
+## Tests
+
+The tests run without an OPNsense: `tests/harness.py` feeds the checks with test data for `config.xml`, program
+output, files and the OpenVPN management sockets. Needs Python 3 with `cryptography` and `requests`:
+```
+python3 -m unittest discover -s tests -v
+```
+Tests marked `expectedFailure` describe known bugs (issue number in the comment). After a fix, remove the marker.
+
 ## Contributing
 
 Bug reports, feature requests and pull requests go to https://code.bashclub.org/bashclub/checkmk-opnsense-agent.
