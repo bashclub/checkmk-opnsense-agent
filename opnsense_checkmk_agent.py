@@ -32,7 +32,7 @@
 ##
 
 
-__VERSION__ = "1.2.16"
+__VERSION__ = "1.2.17"
 
 import sys
 import os
@@ -398,9 +398,22 @@ class checkmk_checker(object):
                 self._datastore[section] = object_dict()
             self._datastore[section][key] = value
 
+    @staticmethod
+    def _read_changelog(path="/usr/local/opnsense/changelog/index.json"):
+        ## the changelog is missing until it is fetched the first time (fresh install, air-gapped, own mirror) and
+        ## OPNsense 26.7.9 writes a broken one (perl warning inside the JSON, entry without date): both must not stop the agent
+        try:
+            with open(path,"r") as _f:
+                _changelog = json.load(_f)
+        except (OSError,ValueError):
+            return []
+        if type(_changelog) != list:
+            return []
+        return [_entry for _entry in _changelog if type(_entry) == dict and _entry.get("version") and _entry.get("date")]
+
     def _getosinfo(self):
         _info = json.load(open("/usr/local/opnsense/version/core","r"))
-        _changelog = json.load(open("/usr/local/opnsense/changelog/index.json","r"))
+        _changelog = self._read_changelog()
         _config_modified = os.stat("/conf/config.xml").st_mtime
         try:
             _default_version = {'series': _info.get("product_series"), 'version': _info.get("product_version"), 'date': time.strftime('%B %d, %Y')}
@@ -411,9 +424,8 @@ class checkmk_checker(object):
             _current_firmware["age"] = int(time.time() - time.mktime(time.strptime(_current_firmware.get("date"),"%B %d, %Y")))
             _current_firmware["version"] = _info.get("product_version")
         except:
-            #raise
             _latest_firmware = {}
-            _current_firmware = {}
+            _current_firmware = {"version": _info.get("product_version","unknown")}
         _mayor_upgrade = None
         try:
             _upgrade_json = json.load(open("/tmp/pkg_upgrade.json","r"))

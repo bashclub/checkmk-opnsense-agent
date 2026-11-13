@@ -69,11 +69,39 @@ class TestFirmware(unittest.TestCase):
         self.assertTrue(line.startswith("1 Firmware update_available=1"), line)
         self.assertIn("openvpn", line)
 
-    @unittest.expectedFailure  # #74: missing changelog (air-gapped, own mirror) makes _getosinfo crash
     def test_missing_changelog(self):
+        """#74: the changelog is missing on a fresh install, air-gapped or with an own mirror."""
         line = run_firmware({"/usr/local/opnsense/changelog/index.json": None,
                              "/tmp/pkg_upgrade.json": json.dumps(pkg_upgrade())})
+        self.assertTrue(line.startswith("0 Firmware update_available=0"), line)
         self.assertIn("Version 26.7.9", line)
+
+    def test_missing_changelog_with_update(self):
+        upgrade = pkg_upgrade([{"name": "opnsense", "current_version": "26.7.9", "new_version": "26.7.10"}])
+        line = run_firmware({"/usr/local/opnsense/changelog/index.json": None,
+                             "/tmp/pkg_upgrade.json": json.dumps(upgrade)})
+        self.assertTrue(line.startswith("1 Firmware update_available=1"), line)
+        self.assertIn("26.7.10 available", line)
+
+    def test_broken_changelog_26_7_9(self):
+        """#87 / opnsense/core#11198: 26.7.9 writes a perl warning into index.json and an entry without date."""
+        good = json.dumps(CHANGELOG[0])
+        broken = ("[\n" + good + ",\n"
+                  "Use of uninitialized value $date in concatenation (.) or string at "
+                  "/usr/local/opnsense/scripts/firmware/changelog/webify.pl line 128.\n"
+                  '{"series":"26.7","version":"26.7.","date":""}\n]\n')
+        line = run_firmware({"/usr/local/opnsense/changelog/index.json": broken,
+                             "/tmp/pkg_upgrade.json": json.dumps(pkg_upgrade())})
+        self.assertTrue(line.startswith("0 Firmware update_available=0"), line)
+        self.assertIn("Version 26.7.9", line)
+
+    def test_changelog_entry_without_date(self):
+        """valid JSON, but entries without date must not break the version age."""
+        changelog = [{"series": "26.7", "version": "26.7.", "date": ""}] + CHANGELOG
+        line = run_firmware({"/usr/local/opnsense/changelog/index.json": json.dumps(changelog),
+                             "/tmp/pkg_upgrade.json": json.dumps(pkg_upgrade())})
+        self.assertTrue(line.startswith("0 Firmware update_available=0"), line)
+        self.assertRegex(line, r"last_updated=\d+\|")
 
     def test_broken_pkg_upgrade_json(self):
         """#87: broken JSON from the OPNsense must not stop the agent."""
