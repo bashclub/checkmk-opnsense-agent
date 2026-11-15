@@ -62,12 +62,24 @@ class TestFirmware(unittest.TestCase):
         self.assertTrue(line.startswith("1 Firmware update_available=1"), line)
         self.assertIn("27.1 available", line)
 
-    @unittest.expectedFailure  # #84: updates of plugins/packages without a new core version are not reported
     def test_package_only_update(self):
-        upgrade = pkg_upgrade([{"name": "openvpn", "current_version": "2.6.14", "new_version": "2.6.15"}])
+        """#84: updates of plugins/packages without a new core version were not reported."""
+        upgrade = pkg_upgrade([{"name": "openvpn", "current_version": "2.6.14", "new_version": "2.6.15"},
+                               {"name": "os-netbird", "current_version": "1.3_2", "new_version": "1.3_3"}])
         line = run_firmware({"/tmp/pkg_upgrade.json": json.dumps(upgrade)})
-        self.assertTrue(line.startswith("1 Firmware update_available=1"), line)
-        self.assertIn("openvpn", line)
+        self.assertTrue(line.startswith("1 Firmware update_available=1|"), line)
+        self.assertIn("|package_updates=2 Version 26.7.9, 2 package updates: openvpn, os-netbird Config changed:", line)
+
+    def test_many_package_updates_are_shortened(self):
+        upgrade = pkg_upgrade([{"name": f"pkg{i:02d}", "current_version": "1", "new_version": "2"} for i in range(15)])
+        line = run_firmware({"/tmp/pkg_upgrade.json": json.dumps(upgrade)})
+        self.assertIn("15 package updates: pkg00, pkg01, pkg02, pkg03, pkg04, pkg05, pkg06, pkg07, pkg08, pkg09, ... Config", line)
+
+    def test_core_update_counts_packages(self):
+        upgrade = pkg_upgrade([{"name": "opnsense", "current_version": "26.7.9", "new_version": "26.7.10"},
+                               {"name": "openvpn", "current_version": "2.6.14", "new_version": "2.6.15"}])
+        line = run_firmware({"/tmp/pkg_upgrade.json": json.dumps(upgrade)})
+        self.assertIn("|package_updates=1 Version 26.7.9 (26.7.10 available", line)
 
     def test_missing_changelog(self):
         """#74: the changelog is missing on a fresh install, air-gapped or with an own mirror."""

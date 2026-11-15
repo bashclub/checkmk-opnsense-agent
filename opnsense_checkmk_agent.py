@@ -491,10 +491,13 @@ class checkmk_checker(object):
             _latest_firmware = {}
             _current_firmware = {"version": _info.get("product_version","unknown")}
         _mayor_upgrade = None
+        _package_updates = []
         try:
             _upgrade_json = json.load(open("/tmp/pkg_upgrade.json","r"))
             _upgrade_packages = dict(map(lambda x: (x.get("name"),x),_upgrade_json.get("upgrade_packages")))
             _mayor_upgrade = _upgrade_json.get("upgrade_major_version")
+            ## updates of plugins/packages without a new OPNsense version (#84)
+            _package_updates = sorted(_name for _name in _upgrade_packages if _name and _name not in ("opnsense","opnsense-business"))
             _opnsense_package = _upgrade_packages.get("opnsense",_upgrade_packages.get("opnsense-business"))
             _current_firmware["version"] = _opnsense_package.get("current_version")
             _latest_firmware["version"] = _opnsense_package.get("new_version")
@@ -510,6 +513,7 @@ class checkmk_checker(object):
             "product_series"    : _info.get("product_series"),
             "latest_version"    : (_mayor_upgrade if _mayor_upgrade else _latest_firmware.get("version","unknown")),
             "latest_date"       : _latest_firmware.get("date",""),
+            "package_updates"   : _package_updates,
             "hostname"          : self._run_prog("hostname").strip(" \n")
         }
         if os.path.exists("/usr/local/opnsense/version/core.license"):
@@ -624,9 +628,15 @@ class checkmk_checker(object):
         return _ifs
 
     def checklocal_firmware(self):
-        if self._info.get("os_version") != self._info.get("latest_version"):
-            return ["1 Firmware update_available=1|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**self._info)]
-        return ["0 Firmware update_available=0|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f} Version {os_version}  Config changed: {last_configchange}".format(**self._info)]
+        _info = dict(self._info)
+        _packages = _info.get("package_updates") or []
+        _info["package_count"] = len(_packages)
+        _info["packages"] = ", ".join(_packages[:10]) + (", ..." if len(_packages) > 10 else "")
+        if _info.get("os_version") != _info.get("latest_version"):
+            return ["1 Firmware update_available=1|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f}|package_updates={package_count} Version {os_version} ({latest_version} available {latest_date}) Config changed: {last_configchange}".format(**_info)]
+        if _packages: ## plugins/packages only, no new OPNsense version (#84)
+            return ["1 Firmware update_available=1|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f}|package_updates={package_count} Version {os_version}, {package_count} package updates: {packages} Config changed: {last_configchange}".format(**_info)]
+        return ["0 Firmware update_available=0|last_updated={version_age:.0f}|apply_finish_time={config_age:.0f}|package_updates=0 Version {os_version}  Config changed: {last_configchange}".format(**_info)]
 
     def checklocal_business(self):
         if self._info.get("business_expire"):
