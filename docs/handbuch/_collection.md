@@ -34,7 +34,7 @@ Neu hier: [Installation](01-einrichtung/01-installation.md), dann
 Zum Kommentieren ist ein Konto bei code.bashclub.org nötig, die Anmeldung geht auch mit einem GitHub-Konto. Das
 Repository auf GitHub ist nur noch ein Spiegel.
 
-Der Agent wurde von Nils Stöber für den bashclub entwickelt.
+Der Agent wurde von Nils Stöver entwickelt; Thorsten Spille hat die Pflege übernommen.
 
 **Unterstützen**
 

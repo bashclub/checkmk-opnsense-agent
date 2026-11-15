@@ -22,8 +22,10 @@ CHECKMK=192.0.2.10
 echo "onlyfrom: $CHECKMK" >> /usr/local/etc/checkmk.conf
 /usr/local/etc/rc.syshook.d/start/99-checkmk_agent --restart
 ```
-Mehrere Adressen durch Komma trennen: `onlyfrom: 192.0.2.10,2001:db8::10`. Netze (CIDR) kennt `onlyfrom` nicht.
-Abgelehnte Verbindungen stehen im Systemlog als `Client 192.0.2.99 not allowed`.
+Mehrere Adressen durch Komma trennen: `onlyfrom: 192.0.2.10,2001:db8::10`. Erlaubt sind nur IPv4- und
+IPv6-Adressen; Hostnamen und Netze (CIDR) ignoriert der Agent mit einer Warnung im Systemlog. Steht `onlyfrom` in der
+Config, aber keine gültige Adresse (auch bei leerem Wert), lehnt er jede Verbindung ab. Abgelehnte Verbindungen stehen
+im Systemlog als `Client 192.0.2.99 not allowed` (ab 1.2.18; vorher wurden sie nicht protokolliert).
 
 :::warning
 **Fehler bis 1.2.17:** Seit 1.2.11 nimmt der Agent IPv4 und IPv6 auf einem Socket an. Dort kommen IPv4-Clients als

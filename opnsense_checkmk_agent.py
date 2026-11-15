@@ -173,13 +173,26 @@ class NginxAdapter(HTTPAdapter):
             return NginxConnectionPool()
 
 def client_ip(address):
+    ## normalized IPv4/IPv6 address or None if it is none (hostname, network, typo)
     ## the agent listens dual-stack (IPv6 socket), IPv4 clients arrive as ::ffff:192.0.2.10
-    _address = str(address).strip()
     try:
-        _mapped = getattr(ipaddress.ip_address(_address),"ipv4_mapped",None)
+        _ip = ipaddress.ip_address(str(address).strip())
     except ValueError:
-        return _address
-    return str(_mapped) if _mapped else _address
+        return None
+    return str(getattr(_ip,"ipv4_mapped",None) or _ip)
+
+def parse_ip_list(value,option):
+    ## comma separated addresses, invalid entries are logged and ignored
+    _ret = []
+    for _entry in str(value).split(","):
+        if not _entry.strip():
+            continue
+        _ip = client_ip(_entry)
+        if _ip:
+            _ret.append(_ip)
+        else:
+            log(f"{option}: ignoring '{_entry.strip()}', only IPv4 and IPv6 addresses are allowed","warning")
+    return _ret
 
 def check_pid(pid):
     try:
@@ -192,7 +205,7 @@ class checkmk_handler(StreamRequestHandler):
     def handle(self):
         with self.server._mutex:
             try:
-                _strmsg = self.server.do_checks(remote_ip=client_ip(self.client_address[0]))
+                _strmsg = self.server.do_checks(remote_ip=client_ip(self.client_address[0]) or self.client_address[0])
             except Exception as e:
                 raise
                 _strmsg = str(e).encode("utf-8")
@@ -1707,7 +1720,10 @@ class checkmk_server(TCPServer,checkmk_checker):
     def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,expire_inventory=0,tenants=None,**kwargs):
         self.tcp_port = port
         self.pidfile = pidfile
-        self.onlyfrom = [client_ip(_ip) for _ip in onlyfrom.split(",") if _ip.strip()] if onlyfrom else None
+        ## onlyfrom set: only these addresses, without a valid address nobody (fail closed)
+        self.onlyfrom = parse_ip_list(onlyfrom,"onlyfrom") if onlyfrom is not None else None
+        if self.onlyfrom == []:
+            log("onlyfrom contains no valid address, all connections are rejected","warning")
         self.skipcheck = skipcheck.split(",") if skipcheck else []
         self.tenants = self._get_tenants(tenants) if type(tenants) == str else {}
         self._available_sysctl_list = self._run_prog("sysctl -aN").split()
@@ -1723,16 +1739,19 @@ class checkmk_server(TCPServer,checkmk_checker):
     def _get_tenants(self,tenants):
         _ret = {}
         for _tenant in tenants.split(","):
-            if _tenant.find("#") > -1:
-                _addr,_secret = _tenant.split("#",1)
-                _ret[client_ip(_addr)] = _secret
-            elif _tenant.strip():
-                _ret[client_ip(_tenant)] = None
+            _addr,_,_secret = _tenant.partition("#")
+            if not _addr.strip():
+                continue
+            _ip = client_ip(_addr)
+            if not _ip:
+                log(f"tenants: ignoring '{_addr.strip()}', only IPv4 and IPv6 addresses are allowed","warning")
+                continue
+            _ret[_ip] = _secret or None
         return _ret
 
     def verify_request(self, request, client_address):
         _client = client_ip(client_address[0])
-        if self.onlyfrom and _client not in self.onlyfrom and _client not in self.tenants.keys():
+        if self.onlyfrom is not None and _client not in self.onlyfrom and _client not in self.tenants.keys():
             log(f"Client {_client} not allowed","warn")
             return False
         return True

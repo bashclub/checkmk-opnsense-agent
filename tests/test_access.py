@@ -16,15 +16,17 @@ class TestClientIp(unittest.TestCase):
     def test_normalize(self):
         agent = load_agent()
         for given, expected in (("::ffff:192.0.2.10", "192.0.2.10"), ("192.0.2.10", "192.0.2.10"),
-                                ("2001:db8::10", "2001:db8::10"), (" 192.0.2.10 ", "192.0.2.10"), ("checkmk", "checkmk")):
+                                ("2001:db8::10", "2001:db8::10"), ("2001:DB8:0::0010", "2001:db8::10"),
+                                (" 192.0.2.10 ", "192.0.2.10"), ("checkmk", None), ("192.0.2.0/24", None), ("", None)):
             self.assertEqual(agent.client_ip(given), expected, given)
 
 
 class TestOnlyFrom(unittest.TestCase):
     def allowed(self, client, **options):
         agent = load_agent()
-        server = make_server(agent, **options)
-        with mock.patch.object(agent, "log"):
+        with mock.patch.object(agent, "log") as log:
+            server = make_server(agent, **options)
+            self.log = [call.args[0] for call in log.call_args_list]
             return server.verify_request(None, (client, 40000, 0, 0))
 
     def test_ipv4_client_on_dual_stack_socket(self):
@@ -41,6 +43,23 @@ class TestOnlyFrom(unittest.TestCase):
         """the workaround some users found: onlyfrom: ::ffff:192.0.2.10"""
         self.assertTrue(self.allowed("::ffff:192.0.2.10", onlyfrom="::ffff:192.0.2.10"))
 
+    def test_ipv6_written_differently(self):
+        self.assertTrue(self.allowed("2001:db8::10", onlyfrom="2001:DB8:0:0::10"))
+
+    def test_invalid_entries_are_ignored_and_logged(self):
+        self.assertTrue(self.allowed("::ffff:192.0.2.10", onlyfrom="checkmk.example.org,192.0.2.10"))
+        self.assertFalse(self.allowed("::ffff:192.0.2.99", onlyfrom="checkmk.example.org,192.0.2.10"))
+        self.assertIn("onlyfrom: ignoring 'checkmk.example.org', only IPv4 and IPv6 addresses are allowed", self.log)
+
+    def test_networks_are_not_supported(self):
+        self.assertFalse(self.allowed("::ffff:192.0.2.10", onlyfrom="192.0.2.0/24"))
+
+    def test_without_valid_address_nobody(self):
+        """fail closed: "onlyfrom:" set but empty, only commas or only invalid entries rejects everybody."""
+        for value in ("", ",", " , ", "checkmk.example.org"):
+            self.assertFalse(self.allowed("::ffff:192.0.2.10", onlyfrom=value), repr(value))
+        self.assertIn("onlyfrom contains no valid address, all connections are rejected", self.log)
+
     def test_without_onlyfrom_everybody(self):
         self.assertTrue(self.allowed("::ffff:198.51.100.1"))
 
@@ -52,8 +71,9 @@ class TestTenants(unittest.TestCase):
     def test_with_and_without_secret(self):
         """a tenant without "#secret" raised NameError and stopped the agent."""
         agent = load_agent()
-        server = make_server(agent, tenants="192.0.2.20#secret,192.0.2.21")
-        self.assertEqual(server.tenants, {"192.0.2.20": "secret", "192.0.2.21": None})
+        with mock.patch.object(agent, "log"):
+            server = make_server(agent, tenants="192.0.2.20#secret,192.0.2.21,192.0.2.22#,kunde.example.org#x")
+        self.assertEqual(server.tenants, {"192.0.2.20": "secret", "192.0.2.21": None, "192.0.2.22": None})
 
 
 if __name__ == "__main__":
