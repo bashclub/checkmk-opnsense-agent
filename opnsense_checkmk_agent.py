@@ -32,7 +32,7 @@
 ##
 
 
-__VERSION__ = "1.2.17"
+__VERSION__ = "1.2.18"
 
 import sys
 import os

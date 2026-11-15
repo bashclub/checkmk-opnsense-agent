@@ -38,19 +38,47 @@ class TestWireGuard(unittest.TestCase):
         self.assertEqual(len(lines), 2, lines)
         self.assertTrue(all(l.startswith("0 ") for l in lines), lines)
         self.assertIn('"WireGuard Client: site-a"', lines[0])
-        self.assertIn("wg0: 203.0.113.10 - 10.0.0.0/24", lines[0])
+        self.assertIn("wg0: online, IP:203.0.113.10 - 10.0.0.0/24", lines[0])
 
     def test_site_to_site_peer_down(self):
         lines = self.run_check(NOW - 3600, NOW - 60)
         site = local_lines(lines, "WireGuard Client: site-a")[0]
         self.assertTrue(site.startswith("2 "), site)
-        self.assertIn("last IP:203.0.113.10", site)
+        self.assertIn("offline, last handshake 1h 0m ago, last IP:203.0.113.10", site)
 
-    @unittest.expectedFailure  # #52 / #39, PR #85: a roadwarrior without endpoint address is offline most of the time
     def test_roadwarrior_offline_is_ok(self):
+        """#52 / #39, PR #85: a roadwarrior without endpoint address is offline most of the time."""
         lines = self.run_check(NOW - 30, NOW - 4 * 3600)
         phone = local_lines(lines, "WireGuard Client: phone")[0]
         self.assertTrue(phone.startswith("0 "), phone)
+        self.assertIn("wg0: offline, last handshake 4h 0m ago, last IP:198.51.100.8", phone)
+
+    def test_roadwarrior_never_connected(self):
+        lines = self.run_check(NOW - 30, 0)
+        phone = local_lines(lines, "WireGuard Client: phone")[0]
+        self.assertTrue(phone.startswith("0 ") and "offline, no handshake since start" in phone, phone)
+
+    def test_roadwarrior_online(self):
+        lines = self.run_check(NOW - 30, NOW - 120)
+        phone = local_lines(lines, "WireGuard Client: phone")[0]
+        self.assertTrue(phone.startswith("0 ") and "online, IP:198.51.100.8" in phone, phone)
+
+    def test_instance_down_is_crit(self):
+        """enabled peers missing in "wg show" (instance not running) are CRIT, also roadwarriors."""
+        with FakeOPNsense(WG_CONFIG, commands={"wg show all dump": ""}, now=NOW) as checker:
+            lines = checker.checklocal_wireguard()
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(all(l.startswith("2 ") and "wg0: peer not loaded" in l for l in lines), lines)
+
+    def test_disabled_peer_and_instance_are_skipped(self):
+        config = (WG_CONFIG.replace("<enabled>1</enabled><name>phone</name>", "<enabled>0</enabled><name>phone</name>")
+                  .replace("</servers>", '<server uuid="s2"><enabled>0</enabled><instance>1</instance>'
+                                         "<name>off</name><peers>c3</peers></server></servers>")
+                  .replace("</clients>", '<client uuid="c3"><enabled>1</enabled><name>old</name><pubkey>PUBKEY_C=</pubkey>'
+                                         "<tunneladdress>10.0.2.2/32</tunneladdress><serveraddress/></client></clients>"))
+        with FakeOPNsense(config, commands={"wg show all dump": wg_dump(NOW - 30, NOW - 30)}, now=NOW) as checker:
+            lines = checker.checklocal_wireguard()
+        self.assertEqual([l.split('"')[1] for l in lines], ["WireGuard Client: site-a"], lines)
 
 
 IPSEC_LEGACY = config_xml("""
