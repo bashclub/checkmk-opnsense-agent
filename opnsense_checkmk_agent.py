@@ -89,6 +89,13 @@ TASKFILE_KEYS = "service|type|interval|interface|disabled|ipaddress|hostname|dom
 TASKFILE_REGEX = re.compile(rf"^({TASKFILE_KEYS}):\s*(.*?)(?:\s+#|$)",re.M)
 MAX_SIMULATAN_THREADS = 4
 
+## releases come from main, test versions from testing (--update testing)
+UPDATE_REPO_URL = "https://code.bashclub.org/bashclub/checkmk-opnsense-agent"
+UPDATE_API_URL = "https://code.bashclub.org/api/v1/repos/bashclub/checkmk-opnsense-agent/contents/opnsense_checkmk_agent.py?ref={ref}"
+UPDATE_RAW_URL = UPDATE_REPO_URL + "/raw/branch/{branch}/opnsense_checkmk_agent.py"
+UPDATE_CHECK_INTERVAL = 86400 ## look for a new version once a day
+UPDATE_CHECK_RETRY = 3600 ## after an error (no internet, air-gapped) try again after an hour
+
 for _dir in (BASEDIR, VARDIR, LOCALDIR, PLUGINSDIR, SPOOLDIR, TASKDIR):
     if not os.path.exists(_dir):
         try:
@@ -555,6 +562,55 @@ class checkmk_checker(object):
             _date = self._info.get("business_expire").strftime("%d.%m.%Y")
             return [f'P "Business Licence" expiredays={_days};60:;30:; Licence Expire: {_date}']
         return []
+
+    @staticmethod
+    def _version_tuple(version):
+        return tuple(int(_part) for _part in re.findall(r"\d+",str(version)))
+
+    @staticmethod
+    def _fetch_agent_version(branch):
+        ## only the head of the file is read, __VERSION__ is in the first lines
+        _req = requests.get(UPDATE_RAW_URL.format(branch=branch),stream=True,timeout=5)
+        try:
+            if _req.status_code != 200:
+                raise ValueError(f"HTTP {_req.status_code}")
+            _head = b""
+            for _chunk in _req.iter_content(chunk_size=4096):
+                _head += _chunk
+                _match = re.search(rb"^__VERSION__\s*=\s*\"([0-9.]+)\"",_head,re.M)
+                if _match:
+                    return _match.group(1).decode("ascii")
+                if len(_head) > 65536:
+                    break
+            raise ValueError("no version found")
+        finally:
+            _req.close()
+
+    def checklocal_agentupdate(self):
+        _now = time.time()
+        _cache = self._get_storedata("agentupdate","versions") or {}
+        if _now - _cache.get("checked",0) > (UPDATE_CHECK_INTERVAL if not _cache.get("error") else UPDATE_CHECK_RETRY):
+            _cache = dict(_cache,checked=_now,error="")
+            for _branch in ("main","testing"):
+                try:
+                    _cache[_branch] = self._fetch_agent_version(_branch)
+                except Exception as e:
+                    if _branch == "main":
+                        _cache["error"] = str(e)[:100] or type(e).__name__
+            self._set_storedata("agentupdate","versions",_cache)
+
+        _current = self._version_tuple(__VERSION__)
+        _release, _testing = _cache.get("main"), _cache.get("testing")
+        _versions = f"release {_release}" + (f", testing {_testing}" if _testing else "")
+        if not _release:
+            return [f'0 "Checkmk Agent Update" update_available=0 Version {__VERSION__}, update check not possible: {_cache.get("error")}']
+        _note = f" (last check failed: {_cache.get('error')})" if _cache.get("error") else ""
+        if _current < self._version_tuple(_release):
+            return [f'1 "Checkmk Agent Update" update_available=1 Version {__VERSION__}, update to {_release} available ({_versions}){_note}']
+        if _testing and self._version_tuple(_release) < _current < self._version_tuple(_testing):
+            return [f'1 "Checkmk Agent Update" update_available=1 Version {__VERSION__} (testing), update to testing {_testing} available ({_versions}){_note}']
+        _kind = " (testing)" if _current > self._version_tuple(_release) else ""
+        return [f'0 "Checkmk Agent Update" update_available=0 Version {__VERSION__}{_kind} is up to date ({_versions}){_note}']
 
     def check_label(self):
         _ret = ["<<<labels:sep(0)>>>"]
@@ -2381,7 +2437,7 @@ if __name__ == "__main__":
     _parser.add_argument("--checkoutput",nargs="?",const="127.0.0.1",type=str,metavar="hostname",
         help=_("connect to [hostname]port and decrypt if needed"))
     _parser.add_argument("--update",nargs="?",const="main",type=str,metavar="branch/commitid",
-        help=_("check for update"))
+        help=_("update the agent: release (main) or testing, e.g. --update testing"))
     _parser.add_argument("--config",type=str,dest="configfile",default=CHECKMK_CONFIG,
         help=_("path to config file"))
     _parser.add_argument("--port",type=int,default=6556,
@@ -2515,11 +2571,14 @@ if __name__ == "__main__":
         import hashlib
         import difflib
         from packaging.version import Version
-        _github_req = requests.get(f"https://api.github.com/repos/bashclub/check-opnsense/contents/opnsense_checkmk_agent.py?ref={args.update}")
+        _github_req = requests.get(UPDATE_API_URL.format(ref=args.update),timeout=30)
         if _github_req.status_code != 200:
-            raise Exception(f"Github Error {_github_req.status_code}")
+            raise Exception(f"Error {_github_req.status_code} from {UPDATE_REPO_URL}")
         _github_version = _github_req.json()
-        _github_last_modified = datetime.strptime(_github_req.headers.get("last-modified"),"%a, %d %b %Y %X %Z")
+        try:
+            _github_last_modified = datetime.strptime(_github_req.headers.get("last-modified"),"%a, %d %b %Y %X %Z")
+        except (TypeError,ValueError):
+            _github_last_modified = datetime.now()
         _new_script = base64.b64decode(_github_version.get("content")).decode("utf-8")
         _new_version = re.findall(r"^__VERSION__.*?\"([0-9.]*)\"",_new_script,re.M)
         _new_version = _new_version[0] if _new_version else "0.0.0"
@@ -2588,7 +2647,8 @@ if __name__ == "__main__":
         print(f"Version: {__VERSION__}")
         print("#"*35)
         print("")
-        print("Latest Version under https://github.com/bashclub/check-opnsense")
+        print(f"Latest Version under {UPDATE_REPO_URL} (release: --update, testing: --update testing)")
+        print(f"Bug reports and feature requests: {UPDATE_REPO_URL}/issues")
         print("Questions under https://forum.opnsense.org/index.php?topic=26594.0\n")
         print("Server-side implementation for")
         print("-"*35)

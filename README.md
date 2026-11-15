@@ -23,6 +23,17 @@ chmod +x /usr/local/etc/rc.syshook.d/start/99-checkmk_agent
 
 Ensure you create a packet filter rule to allow connections from your checkmk server to the firewall on port 6556.
 
+## Updates: release and testing
+
+There are two versions: the release (branch `main`) and the testing version (branch `testing`), where fixes go first.
+```
+/usr/local/etc/rc.syshook.d/start/99-checkmk_agent --update           # release
+/usr/local/etc/rc.syshook.d/start/99-checkmk_agent --update testing   # testing version
+```
+The local check `Checkmk Agent Update` looks once a day for a new version on code.bashclub.org and goes WARN when an
+update is available (release users are only told about releases, testing users also about newer testing versions).
+Without internet access it stays OK. To switch it off, add `agentupdate` to `skipcheck` in `/usr/local/etc/checkmk.conf`.
+
 ## Tests
 
 The tests run without an OPNsense: `tests/harness.py` feeds the checks with test data for `config.xml`, program
