@@ -13,6 +13,7 @@ port: 6556
 onlyfrom: 192.0.2.10,2001:db8::10
 encrypt: ein-langes-zufaelliges-passwort
 skipcheck: agentupdate,ipmi
+skipservice: ntopng,haproxy
 ```
 
 | Option | Standard | Bedeutung |
@@ -21,6 +22,7 @@ skipcheck: agentupdate,ipmi
 | `onlyfrom` | alle | nur diese IPv4-/IPv6-Adressen bekommen Daten, durch Komma getrennt; ohne gültige Adresse niemand ([An Checkmk anbinden](../01-einrichtung/02-checkmk-anbinden.md#zugriff-beschränken-onlyfrom)) |
 | `encrypt` | aus | Passwort für die verschlüsselte Ausgabe ([An Checkmk anbinden](../01-einrichtung/02-checkmk-anbinden.md#verschlüsselung)) |
 | `skipcheck` | keine | Checks, die nicht laufen, durch Komma getrennt; die Namen stehen in [Services und Zustände](02-services.md) |
+| `skipservice` | keine | ab 1.2.18: OPNsense-Dienste (Name oder Beschreibung), die gestoppt sein dürfen, durch Komma getrennt ([Services und Zustände](02-services.md)) |
 | `expire_inventory` | `14400` | Sekunden, nach denen ein Abrufer wieder die Inventur bekommt |
 | `tenants` | keine | Abrufer, die nur Task-Daten bekommen ([Erweiterungen](03-erweiterungen.md#tenants)) |
 | `localdir` | `/usr/local/check_mk_agent/local` | Verzeichnis für eigene lokale Checks |

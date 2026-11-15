@@ -14,7 +14,6 @@ handbook (`docs/handbuch/03-fehlerbehebung/02-bekannte-probleme.md`).
 - **Kea DHCP:** pools and leases (GitHub #75, PR #81).
 - **NetBird** (GitHub PR #81).
 - **Consider the CARP state:** no CRIT for tunnels on the backup node (GitHub #76; #48).
-- **Service exceptions:** services that are stopped on purpose do not make `Services` CRIT (GitHub PR #70).
 - **Certificate monitoring:** expiry of all certificates in the trust store, not only OpenVPN and ACME (GitHub #66).
 - **Firmware:** report package and plugin updates without a new OPNsense version (GitHub #84).
 - **`onlyfrom` with networks (CIDR).**

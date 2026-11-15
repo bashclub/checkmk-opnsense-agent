@@ -215,6 +215,7 @@ class checkmk_handler(StreamRequestHandler):
                 pass
 
 class checkmk_checker(object):
+    skipservice = [] ## OPNsense services that may be stopped (option skipservice), lower case
     _available_sysctl_list = []
     _available_sysctl_temperature_list = []
     _ipaccess_log = {}
@@ -783,21 +784,30 @@ class checkmk_checker(object):
 
         return _ret
 
-    def checklocal_services(self):
+    @staticmethod
+    def _get_opnsense_services():
+        ## [(name, description, running), ...] as shown under System > Diagnostics > Services
         _phpcode = '<?php require_once("config.inc");require_once("system.inc"); require_once("plugins.inc"); require_once("util.inc"); foreach(plugins_services() as $_service) { printf("%s;%s;%s\n",$_service["name"],$_service["description"],service_status($_service));} ?>'
         _proc = subprocess.Popen(["php"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,encoding="utf-8")
         _data,_ = _proc.communicate(input=_phpcode,timeout=15)
         _services = []
-        for _service in _data.strip().split("\n"):
-            _services.append(_service.split(";"))
-        _num_services = len(_services)
-        _stopped_services = list(filter(lambda x: x[2] != '1',_services))
-        _num_stopped = len(_stopped_services)
-        _num_running = _num_services - _num_stopped
-        _stopped_services = ", ".join(map(lambda x: x[1],_stopped_services))
-        if _num_stopped > 0:
-            return [f"2 Services running_services={_num_running:.0f}|stopped_service={_num_stopped:.0f} Services: {_stopped_services} not running"]
-        return [f"0 Services running_services={_num_running:.0f}|stopped_service={_num_stopped:.0f} All Services running"]
+        for _line in _data.strip().split("\n"):
+            _fields = _line.split(";")
+            if len(_fields) >= 3:
+                _services.append((_fields[0],_fields[1],_fields[2].strip() == "1"))
+        return _services
+
+    def checklocal_services(self):
+        ## services in skipservice (name or description) may be stopped on purpose (idea from PR #70)
+        _services = self._get_opnsense_services()
+        _skipped = lambda x: x[0].lower() in self.skipservice or x[1].lower() in self.skipservice
+        _num_running = len([_s for _s in _services if _s[2]])
+        _stopped = [_s[1] for _s in _services if not _s[2] and not _skipped(_s)]
+        _stopped_skipped = [_s[1] for _s in _services if not _s[2] and _skipped(_s)]
+        _note = " (stopped, ignored: {0})".format(", ".join(_stopped_skipped)) if _stopped_skipped else ""
+        if _stopped:
+            return [f"2 Services running_services={_num_running:.0f}|stopped_service={len(_stopped):.0f} Services: {', '.join(_stopped)} not running{_note}"]
+        return [f"0 Services running_services={_num_running:.0f}|stopped_service=0 All Services running{_note}"]
 
     def checklocal_carpstatus(self):
         _ret = []
@@ -1717,14 +1727,15 @@ class checkmk_cached_process(object):
 
 class checkmk_server(TCPServer,checkmk_checker):
     address_family = socket.AF_INET6
-    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,expire_inventory=0,tenants=None,**kwargs):
+    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,expire_inventory=0,tenants=None,**kwargs):
         self.tcp_port = port
         self.pidfile = pidfile
         ## onlyfrom set: only these addresses, without a valid address nobody (fail closed)
         self.onlyfrom = parse_ip_list(onlyfrom,"onlyfrom") if onlyfrom is not None else None
         if self.onlyfrom == []:
             log("onlyfrom contains no valid address, all connections are rejected","warning")
-        self.skipcheck = skipcheck.split(",") if skipcheck else []
+        self.skipcheck = [_c.strip() for _c in skipcheck.split(",") if _c.strip()] if skipcheck else []
+        self.skipservice = [_s.strip().lower() for _s in skipservice.split(",") if _s.strip()] if skipservice else []
         self.tenants = self._get_tenants(tenants) if type(tenants) == str else {}
         self._available_sysctl_list = self._run_prog("sysctl -aN").split()
         self._available_sysctl_temperature_list = list(filter(lambda x: x.lower().find("temperature") > -1 and x.lower().find("cpu") == -1,self._available_sysctl_list))
@@ -2533,6 +2544,8 @@ if __name__ == "__main__":
         help=_("number of seconds for inventory expire (default 4h)"))
     _parser.add_argument("--skipcheck",type=str,
         help=_("R|comma seperated checks that will be skipped \n{0}".format("\n".join([", ".join(_checks_available[i:i+10]) for i in range(0,len(_checks_available),10)]))))
+    _parser.add_argument("--skipservice",type=str,
+        help=_("comma seperated OPNsense services (name or description) that may be stopped without CRIT in 'Services'"))
     _parser.add_argument("--zabbix",action="store_true",
         help=_("only output local checks as json for zabbix parsing"))
     _parser.add_argument("--debug",action="store_true",
@@ -2563,6 +2576,8 @@ if __name__ == "__main__":
                 args.expire_inventory = _v
             if _k == "skipcheck":
                 args.skipcheck = _v
+            if _k == "skipservice":
+                args.skipservice = _v
             if _k == "tenants":
                 args.tenants = _v
             if _k.lower() == "localdir":
@@ -2743,10 +2758,10 @@ if __name__ == "__main__":
             print("to start the agent on boot, copy the file to /usr/local/etc/rc.syshook.d/start/")
         print(f"The CHECKMK_BASEDIR is under {BASEDIR} (local,plugin,spool,tasks).")
         print(f"Default config file location is {args.configfile}, create it if it doesn't exist.")
-        print("Config file options port,encrypt,onlyfrom,skipcheck with a colon and the value like the commandline option\n")
+        print("Config file options port,encrypt,onlyfrom,skipcheck,skipservice with a colon and the value like the commandline option\n")
         print("active config:")
         print("-"*35)
-        for _opt in ("port","encrypt","onlyfrom","skipcheck","tenants"):
+        for _opt in ("port","encrypt","onlyfrom","skipcheck","skipservice","tenants"):
             _val = getattr(args,_opt,None)
             if _val:
                 print(f"{_opt}: {_val}")

@@ -36,8 +36,13 @@ Zu einzelnen Services:
   stört ein fehlendes oder kaputtes Changelog (`/usr/local/opnsense/changelog/index.json`) nicht mehr. Reine
   Paket-Updates ohne neue OPNsense-Version meldet der Service nicht
   ([Bekannte Probleme](../03-fehlerbehebung/02-bekannte-probleme.md)).
-- **Services** fragt die Dienste ab, die die OPNsense unter System › Diagnose › Dienste zeigt. Ein Dienst, der
-  absichtlich gestoppt ist, macht den Service CRIT.
+- **Services** fragt die Dienste ab, die die OPNsense unter System › Diagnose › Dienste zeigt. Ab 1.2.18 dürfen
+  Dienste, die in `skipservice` stehen, gestoppt sein, ohne dass der Service CRIT wird; der Text nennt sie
+  (`stopped, ignored: …`). Angegeben wird der Name oder die Beschreibung aus der Dienste-Liste, Groß- und
+  Kleinschreibung egal:
+  ```
+  skipservice: ntopng,HAProxy Load Balancer
+  ```
 - **Audit:** `pkg audit` vergleicht die installierten Pakete mit der Liste bekannter Sicherheitslücken. Die Warnung
   verschwindet, wenn die OPNsense ein korrigiertes Paket ausliefert; Details zeigt `pkg audit -F` auf der Shell.
 - **CARP:** Ein Knoten mit `advskew` unter 50 soll MASTER sein, einer mit 50 oder mehr BACKUP. Der Text zeigt den
