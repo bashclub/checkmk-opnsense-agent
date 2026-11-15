@@ -32,7 +32,7 @@ Umgehung: `skipcheck: openvpn`, bis der Umbau da ist.
   Checkmk findet sie deshalb nicht.
 
 ## DHCP
-- Nur ISC-DHCP. Pools und Leases von Kea erscheinen nicht.
+- DHCP über Dnsmasq (Standard bei neuen Installationen) erscheint nicht; ISC-DHCP und ab 1.2.18 Kea schon.
 
 ## Tasks und Spool
 - Tasks sind ungeprüft: Eine `blocklist`-Task erschien auf der Test-VM nach dem Neustart nicht in der Ausgabe.

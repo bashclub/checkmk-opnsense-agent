@@ -843,8 +843,9 @@ class checkmk_checker(object):
         _leases = set()
         _pools.update(self._isc_dhcp_pools())
         _leases.update(self._isc_active_leases4())
-        _pools.update(self._kea_config_pools())
-        _leases.update(self._kea_active_leases4())
+        if self._kea_dhcp4_enabled():
+            _pools.update(self._kea_config_pools())
+            _leases.update(self._kea_active_leases4())
 
         if not _pools and not _leases:
             return []
@@ -889,20 +890,6 @@ class checkmk_checker(object):
         _dhcpleases = open("/var/dhcpd/var/db/dhcpd.leases","r").read()
         return re.findall(r"lease\s(?P<ipaddr>[0-9.]+)\s\{.*?.\n\s+binding state\sactive.*?\}",_dhcpleases,re.DOTALL)
 
-    def _check_isc_dhcp4(self):
-        _dhcp = self._config_reader().get("dhcpd")
-        if  type(_dhcp) != dict or not os.path.exists("/var/dhcpd/var/db/dhcpd.leases"):
-            return []
-        _ret = ["<<<isc_dhcpd>>>"]
-        _ret.append("[general]\nPID: {0}".format(self.pidof("dhcpd",-1)))
-        _ret.append("[pools]")
-        for _start, _end in self._isc_dhcp_pools():
-            _ret.append("{0}\t{1}".format(_start,_end))
-        _ret.append("[leases]")
-        for _ip in sorted(self._isc_active_leases4()):
-            _ret.append(_ip)
-        return _ret
-
     @staticmethod
     def _kea_pool_range(pool):
         if type(pool) == str:
@@ -944,12 +931,28 @@ class checkmk_checker(object):
                     _ret.append(_range)
         return _ret
 
+    def _kea_dhcp4_enabled(self):
+        ## a disabled kea keeps its old or sample config (with // comments), so ask config.xml
+        try:
+            return self._config_reader().get("OPNsense",{}).get("Kea",{}).get("dhcp4",{}).get("general",{}).get("enabled") == "1"
+        except AttributeError:
+            return False
+
+    @staticmethod
+    def _kea_lease_files(lease_file="/var/db/kea/kea-leases4.csv"):
+        ## oldest first: kea appends changes, the last line of an address wins (memfile, LFC files)
+        _order = {".completed": 0, ".2": 1, ".1": 2, "": 3}
+        _files = []
+        for _file in glob.glob(lease_file + "*"):
+            _suffix = _file[len(lease_file):]
+            if _suffix in _order:
+                _files.append((_order[_suffix],_file))
+        return [_file for _, _file in sorted(_files)]
+
     def _kea_active_leases4(self):
-        _ret = {}
+        _leases = {}
         _now = int(time.time())
-        for _lease_file in glob.glob("/var/db/kea/kea-leases4.csv*"):
-            if not os.path.isfile(_lease_file) or _lease_file.endswith((".pid",".completed")):
-                continue
+        for _lease_file in self._kea_lease_files():
             try:
                 with open(_lease_file,"r",newline="") as _csv_file:
                     for _lease in csv.DictReader(_csv_file):
@@ -959,27 +962,13 @@ class checkmk_checker(object):
                         try:
                             _state = int(_lease.get("state","0") or 0)
                             _expire = int(_lease.get("expire","0") or 0)
-                        except:
+                        except ValueError:
                             continue
-                        if _state == 0 and (_expire == 0 or _expire > _now):
-                            _ret[_ipaddr] = _expire
-            except:
+                        ## state 0 = default (1 declined, 2 expired-reclaimed); a released lease has expire <= now
+                        _leases[_ipaddr] = _state == 0 and (_expire == 0 or _expire > _now)
+            except OSError:
                 pass
-        return _ret
-
-    def _check_kea_dhcp4(self):
-        _config_file = "/usr/local/etc/kea/kea-dhcp4.conf"
-        if not os.path.exists(_config_file) and not glob.glob("/var/db/kea/kea-leases4.csv*"):
-            return []
-        _ret = ["<<<isc_dhcpd>>>"]
-        _ret.append("[general]\nPID: {0}".format(self.pidof("kea-dhcp4",-1)))
-        _ret.append("[pools]")
-        for _start, _end in self._kea_config_pools(_config_file):
-            _ret.append("{0}\t{1}".format(_start,_end))
-        _ret.append("[leases]")
-        for _ipaddr in sorted(self._kea_active_leases4(),key=lambda x: int(ipaddress.IPv4Address(x))):
-            _ret.append(_ipaddr)
-        return _ret
+        return [_ipaddr for _ipaddr, _active in _leases.items() if _active]
 
     def check_squid(self):
         _squid_config = self._config_reader().get("OPNsense",{}).get("proxy",{})

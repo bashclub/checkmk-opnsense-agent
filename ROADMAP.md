@@ -11,8 +11,7 @@ handbook (`docs/handbuch/03-fehlerbehebung/02-bekannte-probleme.md`).
 
 ## Feature requests
 - **Caddy** (plugin `os-caddy`): service running, reverse proxy domains/handlers, certificates.
-- **Kea DHCP:** pools and leases (GitHub #75, PR #81).
-- **NetBird** (GitHub PR #81).
+- **Dnsmasq DHCP:** pools and leases (default DHCP server of new OPNsense installations).
 - **Consider the CARP state:** no CRIT for tunnels on the backup node (GitHub #76; #48).
 - **Certificate monitoring:** expiry of all certificates in the trust store, not only OpenVPN and ACME (GitHub #66).
 - **Firmware:** report package and plugin updates without a new OPNsense version (GitHub #84).

@@ -26,6 +26,7 @@ liefert keinen Service.
 | `openvpn` | `OpenVPN Server: <Name>`, `OpenVPN Client: <Name>`, `OpenVPN Connection: <Name>` | läuft bzw. verbunden | wartet auf Verbindung; Zertifikat läuft in unter 61 Tagen ab | Server down, nicht verbunden; Zertifikat in unter 31 Tagen |
 | `ipsec` | `IPsec Tunnel: <Name>` | Tunnel aufgebaut (mindestens eine Phase 2) | – | nicht verbunden, IPsec läuft nicht |
 | `wireguard` | `WireGuard Client: <Name>` | verbunden; Roadwarrior auch getrennt | – | Site-to-Site ohne Handshake seit 5 min; Instanz läuft nicht |
+| `netbird` | `NetBird`, `NetBird Peer: <Name>` | ab 1.2.18: Daemon, Management und Signal verbunden; Peer verbunden | Management oder Signal getrennt; Peer `Connecting`/`Idle` oder Handshake älter als 5 min | Daemon nicht verbunden (z. B. `NeedsLogin`), keine Daten; Peer getrennt |
 | `unbound` | `Unbound DNS` | läuft, mit Anfragen und Cache-Treffern | – | läuft nicht |
 | `acmeclient` | `ACME Cert: <Name>` | Zertifikat erneuert | ausstehend | Fehler, Ablauf in unter 10 Tagen |
 | `nginx` | `Nginx Uptime`, `Nginx Location: <Name>` | läuft, Upstreams erreichbar | Upstream teilweise erreichbar, keine Daten | nginx läuft nicht, Upstream down |
@@ -51,6 +52,9 @@ Zu einzelnen Services:
 - **OpenVPN:** Altes Modell (Server/Clients unter VPN › OpenVPN, „Legacy“) und Instanzen. Mit den Instanzen gibt
   es bekannte Fehler ([Bekannte Probleme](../03-fehlerbehebung/02-bekannte-probleme.md)).
 - **IPsec:** nur wenn IPsec eingeschaltet ist, und nur das alte Tunnel-Modell (Phase 1/2), noch nicht die Verbindungen (swanctl) ab OPNsense 23.1.
+- **NetBird** ab 1.2.18, wenn `netbird` installiert ist (Plugin `os-netbird`): ein Service für den Daemon und je
+  Peer einer, aus `netbird status --json`. Metriken: verbundene, gesamte und über Relay verbundene Peers; je Peer
+  Latenz, Alter des letzten Handshakes und Traffic.
 - **WireGuard** ab 1.2.18: Peers ohne Endpoint-Adresse (Roadwarrior: Handy, Laptop) sind nur verbunden, solange sie
   genutzt werden; getrennt bleiben sie OK. Deaktivierte Peers und Peers nur an deaktivierten Instanzen erscheinen
   nicht. Der Text beginnt mit `online` oder `offline`.
@@ -75,7 +79,7 @@ verschwinden.
 | `temperature` | `lnx_thermal` | Temperatur-Sensoren | Sensoren per `sysctl` |
 | `ssh` | `sshd_config` | SSH-Einstellungen | SSH eingeschaltet |
 | `label` | `labels` | Label `cmk/device_type:vm` in einer VM | – |
-| `dhcp` | `isc_dhcpd` | DHCP-Pools und Leases | ISC-DHCP (Kea noch nicht) |
+| `dhcp` | `isc_dhcpd` | DHCP-Pools und aktive Leases; ab 1.2.18 auch von Kea DHCPv4 | ISC-DHCP oder Kea (in der OPNsense eingeschaltet); nicht Dnsmasq-DHCP |
 | `haproxy` | `haproxy` | Frontends, Backends, Server | Plugin `os-haproxy` |
 | `squid` | `squid` | Proxy-Statistik | Web-Proxy eingeschaltet und auf 127.0.0.1 erreichbar; [Squid-MKP](https://exchange.checkmk.com/p/squid) in Checkmk |
 | `smartinfo` | `disk_smart_info` | SMART-Werte der Festplatten | Plugin `os-smart`; [checkmk-smart-MKP](https://github.com/bashclub/checkmk-smart) in Checkmk |
