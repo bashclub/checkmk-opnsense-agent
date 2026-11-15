@@ -57,9 +57,11 @@ Zu einzelnen Services:
   runs on the master:`. Gebunden heißt: OpenVPN-Instanz mit „CARP Depend on“ oder lokaler Adresse der VIP, alter
   OpenVPN-Tunnel auf einem VIP-Interface, IPsec-Verbindung mit der VIP als lokaler Adresse, alter IPsec-Tunnel auf
   einem VIP-Interface. Andere Tunnel werden auf beiden Knoten normal bewertet.
-- **Certificate/CA** ab 1.2.18: jedes Zertifikat und jede CA unter System › Sicherheit › Zertifikate bzw.
-  Autoritäten, Name ist die Beschreibung. Metrik `expiredays`; die Schwellwerte 30/14 Tage gibt der Agent mit,
-  Checkmk bewertet sie. Zertifikate des ACME-Clients fehlen hier, die überwacht `ACME Cert`. Alte Zertifikate (z. B.
+- **Certificate/CA** ab 1.2.18: jedes Zertifikat unter System › Sicherheit › Zertifikate und jede eigene CA (mit
+  privatem Schlüssel) unter Autoritäten, Name ist die Beschreibung. Metrik `expiredays`; die Schwellwerte 30/14 Tage
+  gibt der Agent mit, Checkmk bewertet sie. Nicht dabei: importierte CAs ohne Schlüssel (z. B. die
+  Zwischenzertifikate R10, R11 … des ACME-Clients), Zertifikate des ACME-Clients (überwacht `ACME Cert`) und
+  Zertifikate, die seit mehr als 30 Tagen abgelaufen sind (werden offensichtlich nicht mehr genutzt). Alte Zertifikate (z. B.
   von ausgeschiedenen VPN-Benutzern) nimmt `skipcert` aus: Beschreibung, CN oder refid, durch Komma getrennt:
   ```
   skipcert: VPN alice,bob.example.org

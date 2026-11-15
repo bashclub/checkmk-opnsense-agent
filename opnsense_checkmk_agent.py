@@ -405,7 +405,7 @@ class checkmk_checker(object):
                 if _name in self.skipcheck:
                     continue
                 try:
-                    _lines += getattr(self,_check)()
+                    _lines += [self.local_check_line(_line) for _line in getattr(self,_check)()]
                 except:
                     _failed_sections.append(_name)
                     _errors.append(traceback.format_exc())
@@ -455,6 +455,15 @@ class checkmk_checker(object):
             except OSError: ## removed meanwhile or a directory
                 continue
         return _ret
+
+    @staticmethod
+    def local_check_line(line):
+        ## service names come from descriptions in config.xml; a quote in them (e.g. "Let's Encrypt") makes Checkmk
+        ## report "Invalid data" for the whole line
+        _match = re.match(r'^([0-3P]) "(.*?)" (?=\S*=\S*|- )',line)
+        if not _match or not re.search(r"['\"]",_match.group(2)):
+            return line
+        return '{0} "{1}" {2}'.format(_match.group(1),re.sub(r"['\"]","",_match.group(2)),line[_match.end():])
 
     def do_zabbix_output(self):
         self._getosinfo()
@@ -1857,9 +1866,11 @@ class checkmk_checker(object):
 
     CERT_WARN_DAYS = 30
     CERT_CRIT_DAYS = 14
+    CERT_GONE_DAYS = 30 ## expired longer: no longer in use, no service
 
     def checklocal_certificates(self):
-        ## certificates and CAs of System > Trust (#66); ACME certificates have their own service "ACME Cert"
+        ## certificates and CAs of System > Trust (#66); ACME certificates have their own service "ACME Cert";
+        ## only own CAs (with private key): CAs imported without key are intermediates of the ACME client or trust anchors
         _ret = []
         _config = self._config_reader()
         _acme = ((_config.get("OPNsense") or {}).get("AcmeClient") or {}).get("certificates") or {}
@@ -1870,6 +1881,10 @@ class checkmk_checker(object):
             for _entry in self._as_list(_config.get(_kind)):
                 if not _entry.get("crt") or _entry.get("refid") in _acme_refids:
                     continue ## signing request without certificate, or ACME
+                if (_entry.get("descr") or "").strip().endswith("(ACME Client)"):
+                    continue ## imported by the ACME client, also older ones no longer referenced
+                if _kind == "ca" and not _entry.get("prv"):
+                    continue
                 try:
                     _x509 = x509.load_pem_x509_certificate(base64.b64decode(_entry.get("crt")),crypto_default_backend())
                 except Exception:
@@ -1878,15 +1893,18 @@ class checkmk_checker(object):
                 _description = (_entry.get("descr") or "").strip() or _cn or _entry.get("refid")
                 if {_description.lower(),_cn.lower(),str(_entry.get("refid")).lower()} & set(self.skipcert):
                     continue
-                _name = f"{_prefix}: {_description}"
+                _notvalidafter = _x509.not_valid_after_utc.timestamp()
+                if _now - _notvalidafter > self.CERT_GONE_DAYS * 86400:
+                    continue
+                _name = "{0}: {1}".format(_prefix,re.sub(r"['\"]","",_description)) ## quotes break the local check format
                 if _name in _names: ## two entries with the same description
                     _name = f"{_name} ({_entry.get('refid')})"
                 _names.add(_name)
-                _notvalidafter = _x509.not_valid_after_utc.timestamp()
                 _days = int((_notvalidafter - _now) // 86400)
                 _expire = time.strftime("%d.%m.%Y",time.localtime(_notvalidafter))
                 _when = f"expired on {_expire}" if _days < 0 else f"expires on {_expire} ({_days} days)"
-                _ret.append(f'P "{_name}" expiredays={_days};{self.CERT_WARN_DAYS}:;{self.CERT_CRIT_DAYS}: CN {_cn}, issuer {self.get_common_name(_x509.issuer)}, {_when}')
+                _text = re.sub(r"['\"]","",f"CN {_cn}, issuer {self.get_common_name(_x509.issuer)}, {_when}")
+                _ret.append(f'P "{_name}" expiredays={_days};{self.CERT_WARN_DAYS}:;{self.CERT_CRIT_DAYS}: {_text}')
         return _ret
 
     CADDY_CERTDIR = "/var/db/caddy/data/caddy/certificates"

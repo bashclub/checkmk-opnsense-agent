@@ -42,6 +42,17 @@ class TestCertificates(unittest.TestCase):
 
 
 
+class TestLocalCheckLine(unittest.TestCase):
+    def test_quotes_in_service_names(self):
+        """a description like "Bob's office" made Checkmk report the whole line as invalid data."""
+        line = load_agent().checkmk_checker.local_check_line
+        self.assertEqual(line('2 "OpenVPN Connection: Bob\'s office" connections_ssl_vpn=0;;|if_in_octets=0 WAIT'),
+                         '2 "OpenVPN Connection: Bobs office" connections_ssl_vpn=0;;|if_in_octets=0 WAIT')
+        self.assertEqual(line('0 "Gateway "WAN" DSL" rtt=1|loss=0 ok'), '0 "Gateway WAN DSL" rtt=1|loss=0 ok')
+        self.assertEqual(line('0 "Gateway WAN" - Bob\'s text stays'), '0 "Gateway WAN" - Bob\'s text stays')
+        self.assertEqual(line("0 Services running_services=1 All"), "0 Services running_services=1 All")
+
+
 class TestSpool(unittest.TestCase):
     def test_max_age_prefix(self):
         """"600_name" is only delivered for 600s; the prefix was matched against the full path and never worked."""
