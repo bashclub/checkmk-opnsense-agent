@@ -171,6 +171,15 @@ class NginxAdapter(HTTPAdapter):
     def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
             return NginxConnectionPool()
 
+def client_ip(address):
+    ## the agent listens dual-stack (IPv6 socket), IPv4 clients arrive as ::ffff:192.0.2.10
+    _address = str(address).strip()
+    try:
+        _mapped = getattr(ipaddress.ip_address(_address),"ipv4_mapped",None)
+    except ValueError:
+        return _address
+    return str(_mapped) if _mapped else _address
+
 def check_pid(pid):
     try:
         os.kill(pid,0)
@@ -182,7 +191,7 @@ class checkmk_handler(StreamRequestHandler):
     def handle(self):
         with self.server._mutex:
             try:
-                _strmsg = self.server.do_checks(remote_ip=self.client_address[0])
+                _strmsg = self.server.do_checks(remote_ip=client_ip(self.client_address[0]))
             except Exception as e:
                 raise
                 _strmsg = str(e).encode("utf-8")
@@ -1697,7 +1706,7 @@ class checkmk_server(TCPServer,checkmk_checker):
     def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,expire_inventory=0,tenants=None,**kwargs):
         self.tcp_port = port
         self.pidfile = pidfile
-        self.onlyfrom = onlyfrom.split(",") if onlyfrom else None
+        self.onlyfrom = [client_ip(_ip) for _ip in onlyfrom.split(",") if _ip.strip()] if onlyfrom else None
         self.skipcheck = skipcheck.split(",") if skipcheck else []
         self.tenants = self._get_tenants(tenants) if type(tenants) == str else {}
         self._available_sysctl_list = self._run_prog("sysctl -aN").split()
@@ -1715,14 +1724,15 @@ class checkmk_server(TCPServer,checkmk_checker):
         for _tenant in tenants.split(","):
             if _tenant.find("#") > -1:
                 _addr,_secret = _tenant.split("#",1)
-                _ret[_addr] = _secret
-            else:
-                _ret[_addr] = None
+                _ret[client_ip(_addr)] = _secret
+            elif _tenant.strip():
+                _ret[client_ip(_tenant)] = None
         return _ret
 
     def verify_request(self, request, client_address):
-        if self.onlyfrom and client_address[0] not in self.onlyfrom and client_address[0] not in self.tenants.keys():
-            log("Client {0} not allowed".format(*client_address),"warn")
+        _client = client_ip(client_address[0])
+        if self.onlyfrom and _client not in self.onlyfrom and _client not in self.tenants.keys():
+            log(f"Client {_client} not allowed","warn")
             return False
         return True
 
