@@ -104,6 +104,11 @@ class TestNet(unittest.TestCase):
         data = values(run_net(config)[0])
         self.assertEqual(data["lagg0.interface_name"], "LAN")
 
+    def test_empty_interfaces_section(self):
+        """<interfaces/> (empty) stopped the interface check (None.items())."""
+        lines, _ = run_net(config_xml("<interfaces/>"))
+        self.assertEqual(lines, ["<<<statgrab_net>>>"])
+
     def test_without_laggs_only_assigned_interfaces(self):
         config = config_xml("<interfaces><wan><enable>1</enable><if>ice0</if></wan></interfaces>")
         data = values(run_net(config)[0])

@@ -9,6 +9,7 @@ S    root   21480 10664  0.0 /usr/local/sbin/lighttpd -f /var/etc/lighty-webConf
 S<   root  412300 98112  1.5 eastpect: Eastpect Instance 0 (eastpect)
 I<   root   18400  4096  0.0 ipdrstreamer /usr/local/zenarmor//output//active//temp/
 SN   nobody 15000  3000  0.0 /usr/local/bin/some-niced-daemon
+Ss+  zen-ui 12000  2000  0.1 /usr/local/bin/zen-ui --daemon
 """
 
 
@@ -24,11 +25,14 @@ class TestPs(unittest.TestCase):
         self.assertIn("(nobody,15000,3000,0.0) /usr/local/bin/some-niced-daemon", lines)
         self.assertFalse(any("COMMAND" in l for l in lines), "header line of ps must not be reported")
 
-    @unittest.expectedFailure  # #86: state "S<" / "I<" does not match \w+
     def test_processes_with_priority_flags(self):
+        """#86: state "S<" / "I<" did not match \\w+, the processes were missing (Zenarmor)."""
         lines = self.run_check()
         self.assertIn("(root,412300,98112,1.5) eastpect: Eastpect Instance 0 (eastpect)", lines)
         self.assertIn("(root,18400,4096,0.0) ipdrstreamer /usr/local/zenarmor//output//active//temp/", lines)
+
+    def test_user_with_dash(self):
+        self.assertIn("(zen-ui,12000,2000,0.1) /usr/local/bin/zen-ui --daemon", self.run_check())
 
 
 if __name__ == "__main__":

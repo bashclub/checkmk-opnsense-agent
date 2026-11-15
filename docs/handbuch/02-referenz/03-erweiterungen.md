@@ -31,11 +31,12 @@ chmod +x /usr/local/check_mk_agent/local/hallo
 ## Spool
 Dateien in `/var/lib/check_mk_agent/spool` hängt der Agent unverändert an die Ausgabe an; so können Cron-Jobs oder
 Skripte Ergebnisse ablegen, ohne bei jeder Abfrage zu laufen. Die Datei enthält fertige Abschnitte, für lokale Checks
-also mit der Zeile `<<<local:sep(0)>>>` davor.
+also mit der Zeile `<<<local:sep(0)>>>` davor. Ab 1.2.18 gilt wie beim Linux-Agent: Eine Datei `600_name` wird nur
+600 Sekunden nach ihrer letzten Änderung ausgeliefert, danach nicht mehr (veraltete Ergebnisse).
 
 ## Tasks
 Tasks sind Prüfungen, die der Agent im Hintergrund in eigenem Takt ausführt und deren letztes Ergebnis er mitliefert.
-Sie sind **experimentell**, kaum dokumentiert und noch nicht auf der Test-VM geprüft. Eine Task ist eine Datei `/usr/local/check_mk_agent/tasks/<name>.task`
+Sie sind **experimentell**; `blocklist` ist auf der Test-VM geprüft. Eine Task ist eine Datei `/usr/local/check_mk_agent/tasks/<name>.task`
 mit Zeilen `schlüssel: wert`; der Agent liest das Verzeichnis alle 10 Minuten neu, `--help` zeigt die gefundenen Tasks.
 
 | Schlüssel | Bedeutung |
@@ -53,7 +54,16 @@ mit Zeilen `schlüssel: wert`; der Agent liest das Verzeichnis alle 10 Minuten n
 
 Für `domaincheck` und `nmap` gibt es in Checkmk keine Standard-Plugins; sie brauchen eigene Check-Plugins.
 
-Bekannte Fehler der Tasks stehen in [Bekannte Probleme](../03-fehlerbehebung/02-bekannte-probleme.md).
+Beispiel, die WAN-Adresse der Firewall auf Blocklisten prüfen:
+```sh
+WANIP=198.51.100.1
+mkdir -p /usr/local/check_mk_agent/tasks
+printf 'type: blocklist\nipaddress: %s\nservice: WAN\ninterval: 3600\n' "$WANIP" > /usr/local/check_mk_agent/tasks/blocklist-wan.task
+/usr/local/etc/rc.syshook.d/start/99-checkmk_agent --restart
+```
+Nach dem ersten Lauf (einige Sekunden) erscheint der Service `Blocklist WAN`: OK, wenn die Adresse auf keiner der
+rund 45 Listen steht, sonst CRIT mit den Listen. Private Adressen stehen auf der Bogon-Liste. Der Service
+`CMK Tasks` zeigt, wie viele Tasks es gibt, wie viele gerade laufen und wie viele fehlgeschlagen sind.
 
 ## Tenants
 Mit `tenants` bekommen bestimmte Abrufer **nur** die Ergebnisse der Tasks, die für sie bestimmt sind (Schlüssel

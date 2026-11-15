@@ -34,11 +34,32 @@ class TestCertificates(unittest.TestCase):
         self.assertEqual(cert.get("common_name"), "fw.example.org")
         self.assertGreater(cert.get("not_valid_after"), 0)
 
-    @unittest.expectedFailure  # _certificate_parser calls .get() on None when config.xml has no <cert> at all
     def test_no_certificate_in_store(self):
+        """_certificate_parser called .get() on None when config.xml has no <cert> at all."""
         from harness import config_xml
         with FakeOPNsense(config_xml("")) as checker:
             self.assertIsNone(checker._get_certificate("missing"))
+
+
+
+class TestSpool(unittest.TestCase):
+    def test_max_age_prefix(self):
+        """"600_name" is only delivered for 600s; the prefix was matched against the full path and never worked."""
+        import os
+        import tempfile
+        import time
+        agent = load_agent()
+        with tempfile.TemporaryDirectory() as spooldir:
+            for name, age in (("plain", 99999), ("600_fresh", 60), ("600_old", 3600)):
+                path = os.path.join(spooldir, name)
+                with open(path, "w") as f:
+                    f.write(f"<<<local:sep(0)>>>\n0 {name} - ok\n")
+                os.utime(path, (time.time() - age, time.time() - age))
+            os.mkdir(os.path.join(spooldir, "subdir"))
+            content = "".join(agent.checkmk_checker._read_spool(spooldir))
+        self.assertIn("0 plain - ok", content)
+        self.assertIn("0 600_fresh - ok", content)
+        self.assertNotIn("600_old", content)
 
 
 if __name__ == "__main__":

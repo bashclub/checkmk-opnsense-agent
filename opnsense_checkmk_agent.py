@@ -327,7 +327,7 @@ class checkmk_checker(object):
         ## only tenant data
         if remote_ip in self.tenants.keys():
             _secret = self.tenants.get(remote_ip,None)
-            _lines += self.taskrunner.get_data(tenant=remote_ip)[1:] ## remove number of tasks
+            _lines += self.taskrunner.get_data(tenant=remote_ip)[2:] ## without the "CMK Tasks" service of the firewall
             _lines.append("")
             if _secret:
                 return self.encrypt_msg("\n".join(_lines),password=_secret)
@@ -401,18 +401,7 @@ class checkmk_checker(object):
                     except:
                         _errors.append(traceback.format_exc())
 
-        if os.path.isdir(SPOOLDIR):
-            _now = time.time()
-            for _filename in glob.glob(f"{SPOOLDIR}/*"):
-                _maxage = re.search(r"^(\d+)_",_filename)
-
-                if _maxage:
-                    _maxage = int(_maxage.group(1))
-                    _mtime = os.stat(_filename).st_mtime
-                    if _now - _mtime > _maxage:
-                        continue
-                with open(_filename) as _f:
-                    _lines.append(_f.read())
+        _lines += self._read_spool()
 
         _lines += self.taskrunner.get_data()
         _lines.append("")
@@ -426,6 +415,22 @@ class checkmk_checker(object):
         if self.encrypt and not debug:
             return self.encrypt_msg("\n".join(_lines),password=self.encrypt)
         return "\n".join(_lines).encode("utf-8")
+
+    @staticmethod
+    def _read_spool(spooldir=None):
+        ## spool files as with the Linux agent: a file "600_name" is only delivered for 600s after its last change
+        _ret = []
+        _now = time.time()
+        for _filename in sorted(glob.glob(os.path.join(spooldir or SPOOLDIR,"*"))):
+            try:
+                _maxage = re.search(r"^(\d+)_",os.path.basename(_filename))
+                if _maxage and _now - os.stat(_filename).st_mtime > int(_maxage.group(1)):
+                    continue
+                with open(_filename) as _f:
+                    _ret.append(_f.read())
+            except OSError: ## removed meanwhile or a directory
+                continue
+        return _ret
 
     def do_zabbix_output(self):
         self._getosinfo()
@@ -537,10 +542,7 @@ class checkmk_checker(object):
     def _certificate_parser(self):
         self._certificate_timestamp = time.time()
         self._certificate_store = {}
-        _certs = self._config_reader().get("cert")
-        if type(_certs) != list:
-            _certs = [_certs]
-        for _cert in _certs:
+        for _cert in self._as_list(self._config_reader().get("cert")): ## none, one (dict) or several
             try:
                 _certpem = base64.b64decode(_cert.get("crt"))
                 _x509cert = x509.load_pem_x509_certificate(_certpem,crypto_default_backend())
@@ -581,8 +583,8 @@ class checkmk_checker(object):
 
     def get_opnsense_interfaces(self):
         _ifs = {}
-        for _name,_interface in self._config_reader().get("interfaces",{}).items():
-            if _interface.get("enable") != "1":
+        for _name,_interface in (self._config_reader().get("interfaces") or {}).items(): ## <interfaces/> is None
+            if type(_interface) != dict or _interface.get("enable") != "1":
                 continue
             _desc = _interface.get("descr")
             _ifs[_interface.get("if","_")] = _desc if _desc else _name.upper()
@@ -1082,7 +1084,7 @@ class checkmk_checker(object):
         _gateway_items = _gateways.get("gateway_item",[])
         if type(_gateway_items) != list:
             _gateway_items = [_gateway_items] if _gateway_items else []
-        _interfaces = self._config_reader().get("interfaces",{})
+        _interfaces = self._config_reader().get("interfaces") or {}
         _ipaddresses = self.get_opnsense_ipaddr()
         for _gateway in _gateway_items:
             if type(_gateway.get("descr")) != str:
@@ -2026,7 +2028,7 @@ class checkmk_checker(object):
     def check_ps(self):
         _ret = ["<<<ps>>>"]
         _out = self._run_prog("ps ax -o state,user,vsz,rss,pcpu,command")
-        for _line in re.finditer(r"^(?P<stat>\w+)\s+(?P<user>\w+)\s+(?P<vsz>\d+)\s+(?P<rss>\d+)\s+(?P<cpu>[\d.]+)\s+(?P<command>.*)$",_out,re.M):
+        for _line in re.finditer(r"^(?P<stat>\S+)\s+(?P<user>\S+)\s+(?P<vsz>\d+)\s+(?P<rss>\d+)\s+(?P<cpu>[\d.]+)\s+(?P<command>.*)$",_out,re.M):
             _ret.append("({user},{vsz},{rss},{cpu}) {command}".format(**_line.groupdict()))
         return _ret
 
@@ -2562,15 +2564,15 @@ class checkmk_task(object):
         return f"<<<domaincheck:sep(0):cached({_now},{self.interval*2})>>>\n" + json.dumps(_resultcheck) + "\n<<<>>>"
 
     def _blocklist(self):
-        _ipaddr = self.config.get("ipaddress","").split(",")
+        _ipaddr = [_ip.strip() for _ip in self.config.get("ipaddress","").split(",") if _ip.strip()]
         _dns = checkmk_resolver()
         _service = self.config.get("service","")
-        if _ipaddr == [""]:
+        if not _ipaddr:
             _hostname = self.config.get("hostname")
-            _ipaddr = map(str,_dns.resolve(_hostname,"A")[1])
+            _ipaddr = list(map(str,_dns.resolve(_hostname,"A")[1]))
             if not _service:
                 _service = _hostname
-        if not _service:
+        if not _service and _ipaddr:
             _service = _ipaddr[0]
         _listed = []
         _ipchecklist = set(filter(lambda x: len(x) > 0,_ipaddr))
@@ -2584,10 +2586,10 @@ class checkmk_task(object):
 
         _total_listed = len(_listed)
         _status = 2 if _total_listed > 0 else 0
-        _message = " ".join(_ipaddr) + "not blocked"
+        _message = " ".join(_ipaddr) + " not blocked"
         if _total_listed > 0:
             _message = ",".join([f"{_ip} is on {_bl}" for _ip,_bl in _listed])
-        _legacy = "{0} 'Blocklist {1}' blocklist={2}|blocked={3} {4}".format(_status,_service,len(BLACKLISTS),_total_listed,_message)
+        _legacy = "{0} \"Blocklist {1}\" blocklist={2}|blocked={3} {4}".format(_status,_service,len(BLACKLISTS),_total_listed,_message)
         _now = int(time.time())
         return f"<<<local:sep(0)>>>\ncached({_now},{self.interval*2}) " + _legacy + "\n<<<>>>"
 
@@ -2742,8 +2744,9 @@ class checkmk_taskrunner(object):
             if _piggyback != "":
                 _data += ["<<<<>>>>"]
 
-        _task_service = "{0} 'CMK Tasks' tasks={1}|tasks_running={2},tasks_failed={3} OK".format(0 if _fails == 0 else 1,_task_count,_task_running_count,_fails)
-        return [_task_service] + _data
+        ## own section header: the line before can be any section (spool files, plugins)
+        _task_service = "{0} \"CMK Tasks\" tasks={1}|tasks_running={2}|tasks_failed={3} {4}".format(0 if _fails == 0 else 1,_task_count,_task_running_count,_fails,"OK" if _fails == 0 else f"{_fails} failed")
+        return ["<<<local:sep(0)>>>",_task_service] + _data
 
     def check_taskdir(self):
         _ids = []

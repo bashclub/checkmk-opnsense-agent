@@ -14,19 +14,8 @@ was sich dadurch im Betrieb ändert, steht mit Versionsvermerk im jeweiligen Art
   den CARP-Zustand dabei nicht. Umgehung: die Services auf dem Backup-Knoten in Checkmk per Regel deaktivieren oder
   ihren Zustand anpassen.
 
-## Prozesse
-- Prozesse mit Prioritäts-Kennzeichen im Status (`S<`, `I<`, `SN` …) fehlen im Abschnitt `ps`. Process Discovery in
-  Checkmk findet sie deshalb nicht.
-
 ## DHCP
 - DHCP über Dnsmasq (Standard bei neuen Installationen) erscheint nicht; ISC-DHCP und ab 1.2.18 Kea schon.
-
-## Tasks und Spool
-- Tasks sind ungeprüft: Eine `blocklist`-Task erschien auf der Test-VM nach dem Neustart nicht in der Ausgabe.
-- Lokale Checks aus Tasks setzen den Service-Namen in einfache statt doppelte Anführungszeichen; Checkmk übernimmt
-  dann nur das erste Wort (mit `'`) als Namen.
-- Das Präfix für das Höchstalter von Spool-Dateien (`600_name` wie beim Linux-Agent) wirkt nicht; Spool-Dateien
-  werden immer ausgeliefert, auch wenn sie veraltet sind.
 
 ## Hilfetext
 - `--help` und der Kopf der Datei verweisen für SMART noch auf das MKP `checkmk-smart`. Nach Rückmeldungen funktioniert
