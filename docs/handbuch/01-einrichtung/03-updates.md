@@ -33,6 +33,28 @@ Zurück zum Release geht es mit `--update`; ist das Release älter, warnt der Ag
 mit 1.2.16 oder älter holt sein Update noch von GitHub; dort liegt 1.2.17, danach geht es von code.bashclub.org weiter.
 :::
 
+## Automatisch aktualisieren
+Ab 1.2.20 legt ein Aufruf einen Cronjob an, der jede Nacht um 3:00 auf das neueste Release aktualisiert:
+```sh
+/usr/local/etc/rc.syshook.d/start/99-checkmk_agent --install-cron
+```
+Der Job erscheint unter System › Einstellungen › Cron („Checkmk agent update (main)“) und lässt sich dort ändern oder
+abschalten. Einen anderen Zeitplan gibt man im Cron-Format mit (Minute Stunde Tag Monat Wochentag), die Testing-Version
+mit `--cron-branch testing`:
+```sh
+/usr/local/etc/rc.syshook.d/start/99-checkmk_agent --install-cron "30 4 * * 1" --cron-branch testing
+```
+Ein zweiter Aufruf ersetzt den Job. Entfernen:
+```sh
+/usr/local/etc/rc.syshook.d/start/99-checkmk_agent --uninstall-cron
+```
+Der Job ruft `--update --yes` auf: ohne Rückfragen, nur wenn die Version auf dem Server neuer ist (nie ein Downgrade,
+z. B. wenn eine Testing-Version installiert ist und der Job das Release holt), nur wenn die neue Datei fehlerfrei
+übersetzt; danach startet der Dienst neu. Das Ergebnis steht im Systemlog (`update: …`). Technisch legt
+`--install-cron` die configd-Aktion `checkmkagent update` an
+(`/usr/local/opnsense/service/conf/actions.d/actions_checkmkagent.conf`), denn die Cron-Seite der OPNsense kann nur
+configd-Aktionen ausführen, keine Skripte.
+
 ## Service `Checkmk Agent Update`
 Ab 1.2.17 prüft der Agent einmal am Tag, ob es eine neue Version gibt:
 

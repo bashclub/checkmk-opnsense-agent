@@ -33,7 +33,7 @@
 ##
 
 
-__VERSION__ = "1.2.19"
+__VERSION__ = "1.2.20"
 
 import sys
 import os
@@ -3538,6 +3538,70 @@ class smart_disc(object):
             _ret.append(f"{self.device}|{_k}|{_v}")
         return "\n".join(_ret)
 
+CRON_ACTION_FILE = "/usr/local/opnsense/service/conf/actions.d/actions_checkmkagent.conf"
+CRON_COMMAND = "checkmkagent update" ## configd action: file actions_checkmkagent.conf, section [update]
+CRON_PHP = r"""<?php
+require_once("script/load_phalcon.php");
+$mdl = new \OPNsense\Cron\Cron();
+foreach ($mdl->jobs->job->iterateItems() as $uuid => $job) {
+    if ((string)$job->command == $argv[1]) {
+        $mdl->jobs->job->del($uuid);
+    }
+}
+if ($argv[2] == "add") {
+    $job = $mdl->jobs->job->Add();
+    $job->setNodes(["enabled" => "1", "minutes" => $argv[3], "hours" => $argv[4], "days" => $argv[5],
+        "months" => $argv[6], "weekdays" => $argv[7], "who" => "root", "command" => $argv[1],
+        "parameters" => $argv[8], "description" => "Checkmk agent update (" . $argv[8] . ")"]);
+    $messages = $mdl->performValidation();
+    if ($messages->count() > 0) {
+        foreach ($messages as $message) {
+            echo $message->getField() . ": " . $message->getMessage() . "\n";
+        }
+        exit(1);
+    }
+}
+$mdl->serializeToConfig();
+\OPNsense\Core\Config::getInstance()->save();
+echo "ok\n";
+"""
+
+def _run_php(*args):
+    _proc = subprocess.run(["php","--"] + list(args),input=CRON_PHP,capture_output=True,text=True,timeout=120)
+    return _proc.returncode, (_proc.stdout + _proc.stderr).strip()
+
+def _system(*cmd):
+    subprocess.run(list(cmd),stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=120)
+
+def install_update_cron(schedule,branch):
+    ## configd action (shown in System > Settings > Cron) and a cron job for --update --yes
+    with open(CRON_ACTION_FILE,"w") as _f:
+        _f.write("# checkmk-opnsense-agent --install-cron, removed by --uninstall-cron\n"
+                 "[update]\n"
+                 f"command:{SCRIPTPATH} --yes --update\n"
+                 "parameters:%s\n"
+                 "type:script\n"
+                 "message:Checkmk agent update %s\n"
+                 "description:Checkmk agent update\n")
+    _system("service","configd","restart")
+    _rc, _out = _run_php(CRON_COMMAND,"add",*schedule,branch)
+    if _rc != 0:
+        sys.exit(f"cron job not added: {_out}")
+    _system("configctl","cron","restart")
+    log(f"cron job added: {' '.join(schedule)} update to {branch}")
+    print(f"cron job added (System > Settings > Cron): {' '.join(schedule)}, {SCRIPTPATH} --yes --update {branch}")
+
+def uninstall_update_cron():
+    _rc, _out = _run_php(CRON_COMMAND,"remove")
+    if _rc != 0:
+        sys.exit(f"cron job not removed: {_out}")
+    _system("configctl","cron","restart")
+    if os.path.exists(CRON_ACTION_FILE):
+        os.remove(CRON_ACTION_FILE)
+        _system("service","configd","restart")
+    log("cron job removed")
+    print("cron job and configd action removed")
+
 if __name__ == "__main__":
     import argparse
     class SmartFormatter(argparse.HelpFormatter):
@@ -3568,6 +3632,14 @@ if __name__ == "__main__":
         help=_("connect to [hostname]port and decrypt if needed"))
     _parser.add_argument("--update",nargs="?",const="main",type=str,metavar="branch/commitid",
         help=_("update the agent: release (main) or testing, e.g. --update testing"))
+    _parser.add_argument("--yes",action="store_true",
+        help=_("with --update: no questions, no downgrade, restart the running agent (for cron)"))
+    _parser.add_argument("--install-cron",nargs="?",const="0 3 * * *",type=str,dest="install_cron",metavar="schedule",
+        help=_("add a cron job (System > Settings > Cron) for --update --yes, default \"0 3 * * *\" (03:00 daily)"))
+    _parser.add_argument("--cron-branch",type=str,dest="cron_branch",default="main",choices=("main","testing"),
+        help=_("with --install-cron: update to the release (main, default) or testing"))
+    _parser.add_argument("--uninstall-cron",action="store_true",dest="uninstall_cron",
+        help=_("remove the cron job and the configd action of --install-cron"))
     _parser.add_argument("--config",type=str,dest="configfile",default=CHECKMK_CONFIG,
         help=_("path to config file"))
     _parser.add_argument("--port",type=int,default=6556,
@@ -3645,7 +3717,7 @@ if __name__ == "__main__":
             _pid = int(re.findall(r"\s(\d+)\s",_out.split("\n")[1])[0])
         except (IndexError,ValueError):
             pass
-    _active_methods = [getattr(args,x,False) for x in ("start","stop","restart","status","zabbix","nodaemon","debug","configdebug","update","checkoutput","help")]
+    _active_methods = [getattr(args,x,False) for x in ("start","stop","restart","status","zabbix","nodaemon","debug","configdebug","update","checkoutput","help","uninstall_cron")] + [args.install_cron is not None]
     if SYSHOOK_METHOD and not any(_active_methods):
         #print(f"SYSHOOK {SYSHOOK_METHOD} - {repr(_active_methods)}")
         log(f"using syshook {SYSHOOK_METHOD[0]}")
@@ -3710,13 +3782,30 @@ if __name__ == "__main__":
     elif args.nodaemon:
         _server.server_start()
 
+    elif args.install_cron is not None:
+        _schedule = args.install_cron.split()
+        if len(_schedule) != 5:
+            sys.exit(f"cron schedule needs 5 fields (minute hour day month weekday), e.g. \"0 3 * * *\": {args.install_cron}")
+        install_update_cron(_schedule,args.cron_branch)
+
+    elif args.uninstall_cron:
+        uninstall_update_cron()
+
     elif args.update:
         import hashlib
         import difflib
         from packaging.version import Version
-        _github_req = requests.get(UPDATE_API_URL.format(ref=args.update),headers=UPDATE_HEADERS,timeout=30)
+        def _update_log(message,prio="notice"):
+            log(f"update: {message}",prio)
+            print(message)
+        try:
+            _github_req = requests.get(UPDATE_API_URL.format(ref=args.update),headers=UPDATE_HEADERS,timeout=30)
+        except requests.RequestException as e:
+            _update_log(f"{UPDATE_REPO_URL} not reachable: {e}","warning")
+            sys.exit(1)
         if _github_req.status_code != 200:
-            raise Exception(f"Error {_github_req.status_code} from {UPDATE_REPO_URL}")
+            _update_log(f"Error {_github_req.status_code} from {UPDATE_REPO_URL} ({args.update})","warning")
+            sys.exit(1)
         _github_version = _github_req.json()
         try:
             _github_last_modified = datetime.strptime(_github_req.headers.get("last-modified"),"%a, %d %b %Y %X %Z")
@@ -3732,15 +3821,56 @@ if __name__ == "__main__":
         _current_sha = hashlib.sha1(f"blob {len(_content)}\0".encode("utf-8") + _content).hexdigest()
         _content = _content.decode("utf-8")
         if _current_sha == _github_version.get("sha"):
+            if args.yes:
+                log(f"update: {__VERSION__} is up to date ({args.update})")
             print(f"allready up to date {_current_sha}")
             sys.exit(0)
-        else:
-            _version = Version(__VERSION__)
-            _nversion = Version(_new_version)
-            if _version == _nversion:
-                print("same Version but checksums mismatch")
-            elif _version > _nversion:
-                print(f"ATTENTION: Downgrade from {__VERSION__} to {_new_version}")
+        _version = Version(__VERSION__)
+        _nversion = Version(_new_version)
+        if _version == _nversion:
+            print("same Version but checksums mismatch")
+            if args.yes: ## unattended: only a newer version (a testing build and the release can share the number)
+                _update_log(f"{__VERSION__} is installed, {args.update} has the same version, nothing to do")
+                sys.exit(0)
+        elif _version > _nversion:
+            print(f"ATTENTION: Downgrade from {__VERSION__} to {_new_version}")
+            if args.yes: ## unattended (cron): never downgrade, e.g. testing installed and the job updates the release
+                _update_log(f"{__VERSION__} is newer than {_new_version} ({args.update}), no downgrade")
+                sys.exit(0)
+        try: ## never install a file that does not even compile
+            compile(_new_script,_script_location,"exec")
+        except SyntaxError as e:
+            _update_log(f"{_new_version} from {args.update} does not compile, not installed: {e}","err")
+            sys.exit(1)
+
+        def _install():
+            _tmp = f"{_script_location}.new"
+            with open(_tmp,"wb") as _f:
+                _f.write(_new_script.encode("utf-8"))
+            os.chmod(_tmp,os.stat(_script_location).st_mode)
+            os.replace(_tmp,_script_location)
+            _update_log(f"updated from {__VERSION__} to {_new_version} ({args.update})")
+
+        def _restart():
+            print("stopping Daemon")
+            os.kill(_pid,signal.SIGTERM)
+            print("waiting")
+            time.sleep(5)
+            print("restart")
+            os.system(f"{_script_location} --start")
+
+        def _running():
+            try:
+                os.kill(_pid,0)
+                return _pid > 0
+            except OSError:
+                return False
+
+        if args.yes:
+            _install()
+            if _running():
+                _restart()
+            sys.exit(0)
         while True:
             try:
                 _answer = input(f"Update {_script_location} to {_new_version} (y/n) or show difference (d)? ")
@@ -3748,28 +3878,16 @@ if __name__ == "__main__":
                 print("")
                 sys.exit(0)
             if _answer in ("Y","y","yes","j","J"):
-                with open(_script_location,"wb") as _f:
-                    _f.write(_new_script.encode("utf-8"))
-                
-                print(f"updated to Version {_new_version}")
-                if _pid > 0:
+                _install()
+                if _running():
                     try:
-                        os.kill(_pid,0)
-                        try:
-                            _answer = input(f"Daemon is running (pid:{_pid}), reload and restart (Y/N)? ")
-                        except KeyboardInterrupt:
-                            print("")
-                            sys.exit(0)
-                        if _answer in ("Y","y","yes","j","J"):
-                            print("stopping Daemon")
-                            os.kill(_pid,signal.SIGTERM)
-                            print("waiting")
-                            time.sleep(5)
-                            print("restart")
-                            os.system(f"{_script_location} --start")
-                            sys.exit(0)
-                    except OSError:
-                        pass
+                        _answer = input(f"Daemon is running (pid:{_pid}), reload and restart (Y/N)? ")
+                    except KeyboardInterrupt:
+                        print("")
+                        sys.exit(0)
+                    if _answer in ("Y","y","yes","j","J"):
+                        _restart()
+                        sys.exit(0)
                 break
             elif _answer in ("D","d"):
                 for _line in difflib.unified_diff(_content.split("\n"),

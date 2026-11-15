@@ -54,6 +54,9 @@ Kommandozeilen-Optionen (`--port`, `--encrypt`, …) gelten nur, wenn die Option
 | `--configdebug` | `/conf/config.xml` so, wie der Agent sie liest, als JSON |
 | `--zabbix` | nur die lokalen Checks als JSON |
 | `--update [testing]` | Agent aktualisieren ([Updates](../01-einrichtung/03-updates.md)) |
+| `--yes` (mit `--update`) | ab 1.2.20: ohne Rückfragen, nur auf eine neuere Version, startet den Dienst neu (für Cron) |
+| `--install-cron ["0 3 * * *"]` | ab 1.2.20: Cronjob für das automatische Update anlegen (Standard täglich 3:00), mit `--cron-branch testing` auf Testing |
+| `--uninstall-cron` | ab 1.2.20: diesen Cronjob wieder entfernen |
 | `--port`, `--encrypt`, `--onlyfrom`, `--skipcheck`, `--skipservice`, `--skipcert`, `--netbird_idle`, `--expire_inventory` | wie die Optionen der Datei; die Datei hat Vorrang, außer bei `--encrypt` |
 | `--config datei` | andere Konfigurationsdatei |
 | `--pidfile datei` | PID-Datei, Standard `/var/run/checkmk_agent.pid` |

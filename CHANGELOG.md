@@ -6,6 +6,11 @@ Development moved to https://code.bashclub.org/bashclub/checkmk-opnsense-agent w
 After an update, run a service discovery in Checkmk: several checks report new services or no longer report
 services that were wrong before.
 
+## 1.2.20 – testing
+- Automatic update: `--update --yes` (no questions, only a newer version, never a downgrade, the new file must
+  compile, restarts the agent) and `--install-cron ["0 3 * * *"]` (cron job in System > Settings > Cron via a configd
+  action, default 03:00 daily, `--cron-branch testing`), `--uninstall-cron`.
+
 ## 1.2.19 – 2026-11-15
 - **Disks** (SMART and wearout like "PVE Disks" of cmk-push-agent, needs plugin os-smart): `Disks`,
   `Disk <serial> SMART` (self-assessment, attributes below threshold, last self-test, rising counters, NVMe spare) and

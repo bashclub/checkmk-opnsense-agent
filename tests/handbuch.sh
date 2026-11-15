@@ -18,7 +18,7 @@ for o in $opts; do
 done
 
 # jede Option der Kommandozeile steht in der Konfiguration
-cli=$(grep -oE '_parser\.add_argument\("(-h",")?--[a-z_]+' "$agent" | grep -oE -- '--[a-z_]+')
+cli=$(grep -oE '_parser\.add_argument\("(-h",")?--[a-z_-]+' "$agent" | grep -oE -- '--[a-z_-]+')
 for o in $cli; do
 	check "Kommandozeile $o" grep -qE -- "\`$o( |\`)" "$conf"
 done
