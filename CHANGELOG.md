@@ -6,7 +6,7 @@ Development moved to https://code.bashclub.org/bashclub/checkmk-opnsense-agent w
 After an update, run a service discovery in Checkmk: several checks report new services or no longer report
 services that were wrong before.
 
-## 1.2.19 – testing
+## 1.2.19 – 2026-11-15
 - **Disks** (SMART and wearout like "PVE Disks" of cmk-push-agent, needs plugin os-smart): `Disks`,
   `Disk <serial> SMART` (self-assessment, attributes below threshold, last self-test, rising counters, NVMe spare) and
   `Disk <serial> Wearout` (remaining life of SSD/NVMe with forecast; NVMe, the SMART attribute names Proxmox uses,
