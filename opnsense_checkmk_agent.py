@@ -1080,10 +1080,87 @@ class checkmk_checker(object):
             _ret.append("{status} \"Gateway {descr}\" rtt={rtt}|rttsd={rttsd}|loss={loss} Gateway on Interface: {realinterface} {gateway}".format(**_gateway))
         return _ret
 
+    def _openvpn_tunnels(self):
+        ## legacy servers/clients (<openvpn>, plugin os-openvpn-legacy since 26.1) and instances (since 23.7), normalized
+        _ret = []
+        _config = self._config_reader()
+        _legacy = _config.get("openvpn")
+        if type(_legacy) == dict:
+            for _type in ("server","client"):
+                _entries = _legacy.get(f"openvpn-{_type}")
+                if type(_entries) == dict:
+                    _entries = [_entries]
+                if type(_entries) != list:
+                    continue
+                for _entry in _entries:
+                    if type(_entry) != dict or _entry.get("disable") == "1":
+                        continue
+                    _ret.append({
+                        "type"           : _type,
+                        "p2p"            : _type == "client" or _entry.get("mode") in ("p2p_shared_key","p2p_tls"),
+                        "description"    : _entry.get("description"),
+                        "protocol"       : _entry.get("protocol") or "",
+                        "local_port"     : _entry.get("local_port") or "",
+                        "tunnel_network" : _entry.get("tunnel_network"),
+                        "subnet"         : _entry.get("topology_subnet") == "yes",
+                        "maxclients"     : _entry.get("maxclients"),
+                        "certref"        : _entry.get("certref"),
+                        "socket"         : "/var/etc/openvpn/{0}{1}.sock".format(_type,_entry.get("vpnid")),
+                    })
+        _ovpn = (_config.get("OPNsense") or {}).get("OpenVPN")
+        _instances = _ovpn.get("Instances") if type(_ovpn) == dict else None
+        _instances = _instances.get("Instance") if type(_instances) == dict else None
+        if type(_instances) == dict:
+            _instances = [_instances]
+        for _entry in _instances if type(_instances) == list else []:
+            if type(_entry) != dict or _entry.get("enabled") != "1":
+                continue
+            _ret.append({
+                "type"           : "client" if _entry.get("role") == "client" else "server",
+                "p2p"            : _entry.get("role") == "client",
+                "description"    : _entry.get("description"),
+                "protocol"       : _entry.get("proto") or "",
+                "local_port"     : _entry.get("port") or "",
+                "tunnel_network" : _entry.get("server"),
+                "subnet"         : _entry.get("topology") == "subnet",
+                "maxclients"     : _entry.get("maxclients"),
+                "certref"        : _entry.get("cert"),
+                "socket"         : "/var/etc/openvpn/instance-{0}.sock".format(_entry.get("@uuid")),
+            })
+        for _tunnel in _ret:
+            _description = _tunnel.pop("description")
+            _tunnel["name"] = _description.strip() if type(_description) == str and _description.strip() else "OpenVPN_{protocol}_{local_port}".format(**_tunnel)
+        return _ret
+
+    @staticmethod
+    def _openvpn_maxclients(tunnel):
+        if tunnel.get("maxclients"):
+            return str(tunnel.get("maxclients"))
+        try:
+            _max_clients = ipaddress.IPv4Network(tunnel.get("tunnel_network"),strict=False).num_addresses - 2
+        except (ValueError,TypeError):
+            return "" ## no IPv4 tunnel network (IPv6 only)
+        if not tunnel.get("subnet"):
+            _max_clients = int(_max_clients / 4) ## net30: 4 addresses per client
+        return str(max(1,_max_clients))
+
+    @staticmethod
+    def _openvpn_client_list(status):
+        ## CLIENT_LIST lines of "status 2", columns by the HEADER line
+        _header = []
+        _ret = []
+        for _line in status.splitlines():
+            _fields = [_field.strip() for _field in _line.split(",")]
+            if _fields[:2] == ["HEADER","CLIENT_LIST"]:
+                _header = _fields[2:]
+            elif _fields[0] == "CLIENT_LIST" and _header:
+                _ret.append(dict(zip(_header,_fields[1:])))
+        return _ret
+
     def checklocal_openvpn(self):
         _ret = []
         _cfr = self._config_reader().get("openvpn")
-        _cfn = self._config_reader().get("OPNsense").get("OpenVPN") ##TODO new Connections
+        _cfn = (self._config_reader().get("OPNsense") or {}).get("OpenVPN")
         if type(_cfr) != dict:
             _cfr = {}
         if type(_cfn) != dict:
@@ -1099,119 +1176,88 @@ class checkmk_checker(object):
         if type(_cso) == dict:
             _cso = [_cso]
         if type(_cso) == list:
-            _monitored_clients = dict(map(lambda x: (x.get("common_name").upper(),dict(x,current=[])),_cso))
-            
+            for _overwrite in _cso:
+                if type(_overwrite) != dict or not _overwrite.get("common_name"):
+                    continue
+                if _overwrite.get("disable") == "1" or _overwrite.get("enabled") == "0":
+                    continue
+                _monitored_clients[_overwrite.get("common_name").upper()] = dict(_overwrite,current=[])
+
         _now = time.time()
-        _cfn_instances = _cfn.get("Instances")
-        if type(_cfn_instances) == dict:
-            _cfn_instances = _cfn_instances.get("Instance")
-        for _instance in (_cfr.get("openvpn-client"),_cfr.get("openvpn-server")):
-            if type(_instance) == dict:
-                _instance = _cfn_instances.get("Instance")
-            if type(_instance) != list:
+        for _server in self._openvpn_tunnels():
+            _server_cert = self._get_certificate(_server.get("certref"))
+            _server["status"] = 0
+            _server["expiredays"] = 0
+            _server["expiredate"] = "no certificate found"
+            if _server_cert:
+                _notvalidafter = _server_cert.get("not_valid_after",0)
+                _server["expiredays"] = int((_notvalidafter - _now) / 86400)
+                _server["expiredate"] = time.strftime("Cert Expire: %d.%m.%Y",time.localtime(_notvalidafter))
+                if _server["expiredays"] < 61:
+                    _server["status"] = 2 if _server["expiredays"] < 31 else 1
+                else:
+                    _server["expiredate"] = "\\n" + _server["expiredate"]
+
+            if _server["p2p"]: ## client instances, legacy clients and p2p servers: one connection
+                try:
+                    _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
+                        "SRV_{name}".format(**_server),
+                        *(map(lambda x: int(x),re.findall(r"bytes\w+=(\d+)",self._read_from_openvpnsocket(_server["socket"],"load-stats"))))
+                    )
+                    _states = [_line for _line in self._read_from_openvpnsocket(_server["socket"],"state 1").strip().splitlines() if _line.strip() and _line.strip() != "END"]
+                    _state = (_states[-1].strip().split(",") + [""] * 9)[:9]
+                except Exception: ## socket missing or not answering: openvpn not running
+                    _ret.append('2 "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:{local_port}/{protocol} {expiredate}'.format(**_server))
+                    continue
+                _server["connstate"] = _state[1]
+                if _server["connstate"] == "CONNECTED":
+                    _server["vpn_ipaddr"] = _state[3]
+                    _server["remote_ipaddr"] = _state[4] or _state[6] ## client: remote server, p2p server: remote peer
+                    _server["remote_port"] = _state[5] or _state[7]
+                    _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=1;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} Connected {remote_ipaddr}:{remote_port} {vpn_ipaddr} {expiredate}'.format(**_server))
+                elif _server["type"] == "client":
+                    _server["status"] = 2
+                    _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {connstate} {expiredate}'.format(**_server))
+                else:
+                    _server["status"] = max(_server["status"],1)
+                    _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} waiting on Port {local_port}/{protocol} {expiredate}'.format(**_server))
                 continue
-            for _server in _instance:
-                if _server.get("disable") == '1' or _server.get("enabled") == '0':
-                    continue ## FIXME OK/WARN/SKIP
-                if "role" in _server.keys():
-                    _server["type"] = _server.get("role")
-                    _server["protocol"] = _server.get("proto")
-                    _server["tunnel_network"] = _server.get("server")
-                    _server["local_port"] = _server.get("port")
-                    _server["certref"] = _server.get("cert")
-                    _server["socket"] = "/var/etc/openvpn/instance-{@uuid}.sock".format(**_server)
-                else:
-                    _server["type"] = "server" if _server.get("local_port") else "client"
-                    _server["socket"] = "/var/etc/openvpn/{type}{vpnid}.sock".format(**_server)
 
-                _server["name"] = _server.get("description").strip() if _server.get("description") else "OpenVPN_{protocol}_{local_port}".format(**_server)
+            _server["maxclients"] = self._openvpn_maxclients(_server)
+            try:
+                _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
+                    "SRV_{name}".format(**_server),
+                    *(map(lambda x: int(x),re.findall(r"bytes\w+=(\d+)",self._read_from_openvpnsocket(_server["socket"],"load-stats"))))
+                )
+                _clients = self._openvpn_client_list(self._read_from_openvpnsocket(_server["socket"],"status 2"))
+            except Exception: ## socket missing or not answering: openvpn not running
+                _ret.append('2 "OpenVPN Server: {name}" connections_ssl_vpn=0;;{maxclients}|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:{local_port}/{protocol} {expiredate}'.format(**_server))
+                continue
 
-                _server_cert = self._get_certificate(_server.get("certref"))
-                _server["status"] = 3
-                _server["expiredays"] = 0
-                _server["expiredate"] = "no certificate found"
-                if _server_cert:
-                    _notvalidafter = _server_cert.get("not_valid_after",0)
-                    _server["expiredays"] = int((_notvalidafter - _now) / 86400)
-                    _server["expiredate"] = time.strftime("Cert Expire: %d.%m.%Y",time.localtime(_notvalidafter))
-                    if _server["expiredays"] < 61:
-                        _server["status"] = 2 if _server["expiredays"] < 31 else 1
-                    else:
-                        _server["expiredate"] = "\\n" + _server["expiredate"]
+            _now = int(time.time())
+            for _client_raw in _clients:
+                try:
+                    _username = _client_raw.get("Username","UNDEF")
+                    _client = {
+                        "server"         : _server.get("name"),
+                        "common_name"    : _client_raw.get("Common Name",""),
+                        ## "udp4:198.51.100.7:51234" (openvpn 2.6+), "198.51.100.7:51234", "[2001:db8::7]:51234"
+                        "remote_ip"      : re.sub(r"^(?:udp|tcp)[46]?(?:-server|-client)?:","",_client_raw.get("Real Address","")).rsplit(":",1)[0].strip("[]"),
+                        "vpn_ip"         : _client_raw.get("Virtual Address",""),
+                        "vpn_ipv6"       : _client_raw.get("Virtual IPv6 Address",""),
+                        "bytes_received" : int(_client_raw.get("Bytes Received") or 0),
+                        "bytes_sent"     : int(_client_raw.get("Bytes Sent") or 0),
+                        "uptime"         : _now - int(_client_raw.get("Connected Since (time_t)") or _now),
+                        "username"       : _username if _username != "UNDEF" else _client_raw.get("Common Name",""),
+                        "cipher"         : _client_raw.get("Data Channel Cipher",""),
+                    }
+                except ValueError:
+                    continue
+                if _client["username"].upper() in _monitored_clients:
+                    _monitored_clients[_client["username"].upper()]["current"].append(_client)
 
-                ## server_tls, p2p_shared_key p2p_tls
-                if _server.get("mode") in ("p2p_shared_key","p2p_tls") or _server.get("topology") == "p2p":
-                    try:
-                        
-                        _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
-                            "SRV_{name}".format(**_server),
-                            *(map(lambda x: int(x),re.findall(r"bytes\w+=(\d+)",self._read_from_openvpnsocket(_server["socket"],"load-stats"))))
-                        )
-                        _laststate = self._read_from_openvpnsocket(_server["socket"],"state 1").strip().split("\r\n")[-2]
-                        _timestamp, _server["connstate"], _data = _laststate.split(",",2)
-                        if _server["connstate"] == "CONNECTED":
-                            _data = _data.split(",")
-                            _server["vpn_ipaddr"] = _data[1]
-                            _server["remote_ipaddr"] = _data[2]
-                            _server["remote_port"] = _data[3]
-                            _server["source_addr"] = _data[4]
-                            _server["status"] = 0 if _server["status"] == 3 else _server["status"]
-                            _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=1;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} Connected {remote_ipaddr}:{remote_port} {vpn_ipaddr} {expiredate}/Source IP: {source_addr}'.format(**_server))
-                        else:
-                            if _server["type"] == "client":
-                                _server["status"] = 2
-                                _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {connstate} {expiredate}'.format(**_server))
-                            else:
-                                _server["status"] = 1 if _server["status"] != 2 else 2
-                                _ret.append('{status} "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} waiting on Port {local_port}/{protocol} {expiredate}'.format(**_server))
-                    except:
-                        _ret.append('2 "OpenVPN Connection: {name}" connections_ssl_vpn=0;;|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:/{protocol} {expiredate}'.format(**_server))
-                        continue
-                else:
-                    if not _server.get("maxclients") and _server.get("tunnel_network"):
-                        _max_clients = ipaddress.IPv4Network(_server.get("tunnel_network")).num_addresses -2
-                        if _server.get("topology_subnet") != "yes" and _server.get("topology") != "subnet":
-                            _max_clients = max(1,int(_max_clients/4)) ## p2p
-                        _server["maxclients"] = _max_clients
-                    try:
-                        try:
-                            
-                            _server["bytesin"], _server["bytesout"] = self._get_traffic("openvpn",
-                                "SRV_{name}".format(**_server),
-                                *(map(lambda x: int(x),re.findall(r"bytes\w+=(\d+)",self._read_from_openvpnsocket(_server["socket"],"load-stats"))))
-                            )
-                            _server["status"] = 0 if _server["status"] == 3 else _server["status"]
-                        except:
-                            _server["bytesin"], _server["bytesout"] = 0,0
-                            raise
-                        
-                        _number_of_clients = 0
-                        _now = int(time.time())
-                        _response = self._read_from_openvpnsocket(_server["socket"],"status 2")
-                        for _client_match in re.finditer(r"^CLIENT_LIST,(.*?)$",_response,re.M):
-                            _number_of_clients += 1
-                            _client_raw = list(map(lambda x: x.strip(),_client_match.group(1).split(",")))
-                            _client = {
-                                "server"         : _server.get("name"),
-                                "common_name"    : _client_raw[0],
-                                "remote_ip"      : _client_raw[1].rsplit(":",1)[0], ## ipv6
-                                "vpn_ip"         : _client_raw[2],
-                                "vpn_ipv6"       : _client_raw[3],
-                                "bytes_received" : int(_client_raw[4]),
-                                "bytes_sent"     : int(_client_raw[5]),
-                                "uptime"         : _now - int(_client_raw[7]),
-                                "username"       : _client_raw[8] if _client_raw[8] != "UNDEF" else _client_raw[0],
-                                "clientid"       : int(_client_raw[9]),
-                                "cipher"         : _client_raw[11].strip("\r\n")
-                            }
-                            if _client["username"].upper() in _monitored_clients:
-                                _monitored_clients[_client["username"].upper()]["current"].append(_client)
-
-                        _server["clientcount"] = _number_of_clients
-                        _ret.append('{status} "OpenVPN Server: {name}" connections_ssl_vpn={clientcount};;{maxclients}|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {clientcount}/{maxclients} Connections Port:{local_port}/{protocol} {expiredate}'.format(**_server))
-                    except:
-                        raise
-                        _ret.append('2 "OpenVPN Server: {name}" connections_ssl_vpn=0;;{maxclients}|expiredays={expiredays}|if_in_octets=0|if_out_octets=0 Server down Port:{local_port}/{protocol} {expiredate}'.format(**_server))
+            _server["clientcount"] = len(_clients)
+            _ret.append('{status} "OpenVPN Server: {name}" connections_ssl_vpn={clientcount};;{maxclients}|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {clientcount}/{maxclients} Connections Port:{local_port}/{protocol} {expiredate}'.format(**_server))
 
         for _client in _monitored_clients.values():
             _current_conn = _client.get("current",[])

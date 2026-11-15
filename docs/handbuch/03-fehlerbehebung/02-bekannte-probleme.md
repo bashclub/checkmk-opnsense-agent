@@ -6,15 +6,6 @@ outline:
 Offene Fehler und Einschränkungen, mit Umgehung, soweit es eine gibt. Behobene Fehler verschwinden von dieser Seite;
 was sich dadurch im Betrieb ändert, steht mit Versionsvermerk im jeweiligen Artikel.
 
-## OpenVPN
-- **Instanzen fehlen oder der Check scheitert.** Seit 1.2.16 gehen OpenVPN-Instanzen (VPN › OpenVPN › Instanzen) und
-  ein einzelner Legacy-Server verloren; Client-Instanzen ohne Server und Server ohne Tunnelnetz lassen den Check
-  scheitern (`FailedPythonPlugins: openvpn`). Ein Umbau des Checks ist in Arbeit.
-- **Server nicht erreichbar:** Antwortet der Management-Socket eines Servers nicht, scheitert der ganze Check statt
-  „Server down“ zu melden.
-
-Umgehung: `skipcheck: openvpn`, bis der Umbau da ist.
-
 ## IPsec
 - Nur das alte Tunnel-Modell (Phase 1/2). Verbindungen (VPN › IPsec › Verbindungen, swanctl) erscheinen nicht.
 - Eine Phase 1 ohne Beschreibung lässt den Check scheitern. Umgehung: allen Phase-1-Einträgen eine Beschreibung geben.

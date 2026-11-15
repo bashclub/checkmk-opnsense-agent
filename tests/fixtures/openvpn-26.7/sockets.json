@@ -1,0 +1,27 @@
+{
+ "/var/etc/openvpn/client2.sock": {
+  "load-stats": "SUCCESS: nclients=0,bytesin=3220,bytesout=3274\r\n",
+  "state 1": "1794765226,CONNECTED,SUCCESS,10.18.0.2,127.0.0.1,1195,127.0.0.1,50865\r\nEND\r\n",
+  "status 2": "OpenVPN STATISTICS\r\nUpdated,2026-11-15 17:54:04\r\nTUN/TAP read bytes,0\r\nTUN/TAP write bytes,0\r\nTCP/UDP read bytes,3220\r\nTCP/UDP write bytes,3274\r\nAuth read bytes,16\r\nEND\r\n"
+ },
+ "/var/etc/openvpn/instance-8308e1fc-840f-4c5c-a7a6-1814f2b3262c.sock": {
+  "load-stats": "SUCCESS: nclients=0,bytesin=0,bytesout=140\r\n",
+  "state 1": "1794765209,WAIT,,,,,,\r\nEND\r\n",
+  "status 2": "OpenVPN STATISTICS\r\nUpdated,2026-11-15 17:54:04\r\nTUN/TAP read bytes,0\r\nTUN/TAP write bytes,0\r\nTCP/UDP read bytes,0\r\nTCP/UDP write bytes,70\r\nAuth read bytes,0\r\nEND\r\n"
+ },
+ "/var/etc/openvpn/instance-d56b3a06-5d67-424d-aa49-30a49139c7ab.sock": {
+  "load-stats": "SUCCESS: nclients=0,bytesin=3569,bytesout=3610\r\n",
+  "state 1": "1794765147,CONNECTED,SUCCESS,10.8.0.2,127.0.0.1,1194,,\r\nEND\r\n",
+  "status 2": "OpenVPN STATISTICS\r\nUpdated,2026-11-15 17:54:04\r\nTUN/TAP read bytes,0\r\nTUN/TAP write bytes,0\r\nTCP/UDP read bytes,3569\r\nTCP/UDP write bytes,3610\r\nAuth read bytes,144\r\nEND\r\n"
+ },
+ "/var/etc/openvpn/instance-fb5f99ce-988f-4adb-86be-a380a5482fe9.sock": {
+  "load-stats": "SUCCESS: nclients=1,bytesin=3596,bytesout=3569\r\n",
+  "state 1": "1794765146,CONNECTED,SUCCESS,10.8.0.1,,,127.0.0.1,1194\r\nEND\r\n",
+  "status 2": "TITLE,OpenVPN 2.7.9 x86_64-portbld-freebsd15.1 [SSL (OpenSSL)] [LZO] [LZ4] [PKCS11] [MH/RECVDA] [AEAD] [DCO]\r\nTIME,2026-11-15 17:54:04,1794765244\r\nHEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Connected Since (time_t),Username,Client ID,Peer ID,Data Channel Cipher\r\nCLIENT_LIST,client.vpn.test,udp4:127.0.0.1:58237,10.8.0.2,,3596,3543,2026-11-15 17:52:26,1794765146,UNDEF,0,0,AES-256-GCM\r\nHEADER,ROUTING_TABLE,Virtual Address,Common Name,Real Address,Last Ref,Last Ref (time_t)\r\nROUTING_TABLE,10.8.0.2,client.vpn.test,udp4:127.0.0.1:58237,2026-11-15 17:52:27,1794765147\r\nGLOBAL_STATS,Max bcast/mcast queue length,0\r\nGLOBAL_STATS,dco_enabled,0\r\nEND\r\n"
+ },
+ "/var/etc/openvpn/server1.sock": {
+  "load-stats": "SUCCESS: nclients=1,bytesin=3246,bytesout=3220\r\n",
+  "state 1": "1794765223,CONNECTED,SUCCESS,10.18.0.1,,,127.0.0.1,1195\r\nEND\r\n",
+  "status 2": "TITLE,OpenVPN 2.7.9 x86_64-portbld-freebsd15.1 [SSL (OpenSSL)] [LZO] [LZ4] [PKCS11] [MH/RECVDA] [AEAD] [DCO]\r\nTIME,2026-11-15 17:54:04,1794765244\r\nHEADER,CLIENT_LIST,Common Name,Real Address,Virtual Address,Virtual IPv6 Address,Bytes Received,Bytes Sent,Connected Since,Connected Since (time_t),Username,Client ID,Peer ID,Data Channel Cipher\r\nCLIENT_LIST,client2.vpn.test,udp4:127.0.0.1:50865,10.18.0.2,,3246,3194,2026-11-15 17:53:45,1794765225,UNDEF,0,0,AES-256-GCM\r\nHEADER,ROUTING_TABLE,Virtual Address,Common Name,Real Address,Last Ref,Last Ref (time_t)\r\nROUTING_TABLE,10.18.0.2,client2.vpn.test,udp4:127.0.0.1:50865,2026-11-15 17:53:45,1794765225\r\nGLOBAL_STATS,Max bcast/mcast queue length,0\r\nGLOBAL_STATS,dco_enabled,0\r\nEND\r\n"
+ }
+}

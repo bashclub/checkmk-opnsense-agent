@@ -1,0 +1,98 @@
+<!-- OpenVPN part of config.xml on OPNsense 26.7.9 (test VM): legacy server + p2p client (os-openvpn-legacy),
+     instances: server, client connected to it, client to an unreachable server -->
+<openvpn>
+  <openvpn-server>
+    <vpnid>1</vpnid>
+    <mode>server_tls</mode>
+    <protocol>UDP4</protocol>
+    <dev_mode>tun</dev_mode>
+    <interface>lo0</interface>
+    <local_port>1195</local_port>
+    <description>Legacy Office</description>
+    <tunnel_network>10.18.0.0/24</tunnel_network>
+    <topology_subnet>yes</topology_subnet>
+    <caref>testca</caref>
+    <certref>testserver</certref>
+    <cert_depth>1</cert_depth>
+    <digest>SHA256</digest>
+    <verbosity_level>1</verbosity_level>
+  </openvpn-server>
+  <openvpn-client>
+    <vpnid>2</vpnid>
+    <mode>p2p_tls</mode>
+    <protocol>UDP4</protocol>
+    <dev_mode>tun</dev_mode>
+    <interface>lo0</interface>
+    <server_addr>127.0.0.1</server_addr>
+    <server_port>1195</server_port>
+    <description>Legacy Branch</description>
+    <caref>testca</caref>
+    <certref>testclient2</certref>
+    <digest>SHA256</digest>
+    <verbosity_level>1</verbosity_level>
+  </openvpn-client>
+</openvpn>
+<OPNsense>
+  <OpenVPN version="1.0.1" description="OpenVPN">
+    <Overwrites/>
+    <Instances>
+      <Instance uuid="fb5f99ce-988f-4adb-86be-a380a5482fe9">
+        <vpnid>10</vpnid>
+        <enabled>1</enabled>
+        <dev_type>tun</dev_type>
+        <verb>3</verb>
+        <proto>udp</proto>
+        <ca>testca</ca>
+        <cert_depth>1</cert_depth>
+        <auth>SHA256</auth>
+        <keepalive_interval>10</keepalive_interval>
+        <keepalive_timeout>60</keepalive_timeout>
+        <role>server</role>
+        <port>1194</port>
+        <local>127.0.0.1</local>
+        <topology>subnet</topology>
+        <server>10.8.0.0/24</server>
+        <cert>testserver</cert>
+        <verify_client_cert>require</verify_client_cert>
+        <description>Roadwarrior</description>
+      </Instance>
+      <Instance uuid="d56b3a06-5d67-424d-aa49-30a49139c7ab">
+        <vpnid>11</vpnid>
+        <enabled>1</enabled>
+        <dev_type>tun</dev_type>
+        <verb>3</verb>
+        <proto>udp</proto>
+        <ca>testca</ca>
+        <cert_depth>1</cert_depth>
+        <auth>SHA256</auth>
+        <keepalive_interval>10</keepalive_interval>
+        <keepalive_timeout>60</keepalive_timeout>
+        <role>client</role>
+        <remote>127.0.0.1:1194</remote>
+        <topology>subnet</topology>
+        <cert>testclient</cert>
+        <remote_cert_tls>1</remote_cert_tls>
+        <description>Site B</description>
+      </Instance>
+      <Instance uuid="8308e1fc-840f-4c5c-a7a6-1814f2b3262c">
+        <vpnid>12</vpnid>
+        <enabled>1</enabled>
+        <dev_type>tun</dev_type>
+        <verb>3</verb>
+        <proto>udp</proto>
+        <ca>testca</ca>
+        <cert_depth>1</cert_depth>
+        <auth>SHA256</auth>
+        <keepalive_interval>10</keepalive_interval>
+        <keepalive_timeout>60</keepalive_timeout>
+        <role>client</role>
+        <remote>192.0.2.99:1194</remote>
+        <topology>subnet</topology>
+        <cert>testclient2</cert>
+        <remote_cert_tls>1</remote_cert_tls>
+        <description>Site Nowhere</description>
+      </Instance>
+    </Instances>
+    <StaticKeys/>
+  </OpenVPN>
+</OPNsense>

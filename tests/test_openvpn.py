@@ -1,8 +1,9 @@
 """OpenVPN: legacy configuration (<openvpn>) and instances (<OPNsense><OpenVPN><Instances>, since 23.7, only option since 26.1)."""
+import json
 import unittest
 
 from certs import cert_xml
-from harness import FakeOPNsense, config_xml, local_lines
+from harness import FakeOPNsense, config_xml, fixture, local_lines
 
 NOW = 1_790_000_000  # fixed time for connection ages
 
@@ -114,8 +115,8 @@ class TestOpenVPNLegacy(unittest.TestCase):
             lines = checker.checklocal_openvpn()
         self.assertTrue(any('"OpenVPN Server: OpenVPN_UDP_1194"' in l for l in lines), lines)
 
-    @unittest.expectedFailure  # #82: since 24922b6 a single legacy server (dict) is replaced by the instances and lost
     def test_single_legacy_server(self):
+        """#82: since 24922b6 a single legacy server (dict) was replaced by the instances and lost."""
         config = legacy_config(LEGACY_SERVER.format(description="Office"))
         with FakeOPNsense(config, sockets=server_sockets("/var/etc/openvpn/server1.sock"), now=NOW) as checker:
             lines = checker.checklocal_openvpn()
@@ -126,16 +127,16 @@ class TestOpenVPNInstances(unittest.TestCase):
     SERVER_SOCKET = "/var/etc/openvpn/instance-11111111-2222-3333-4444-555555555555.sock"
     CLIENT_SOCKET = "/var/etc/openvpn/instance-66666666-7777-8888-9999-000000000000.sock"
 
-    @unittest.expectedFailure  # #82 / #67 / #41: instances are not monitored since 24922b6
     def test_server_instance(self):
+        """#82 / #67 / #41: instances were not monitored since 24922b6."""
         with FakeOPNsense(instances_config(INSTANCE_SERVER), sockets=server_sockets(self.SERVER_SOCKET), now=NOW) as checker:
             lines = checker.checklocal_openvpn()
         servers = local_lines(lines, "OpenVPN Server: Roadwarrior")
         self.assertEqual(len(servers), 1, lines)
         self.assertIn("1/254 Connections Port:1194/udp", servers[0])
 
-    @unittest.expectedFailure  # #80 / #71: client instance has no tunnel network (server is empty) and crashes
     def test_client_instance(self):
+        """#80 / #71: a client instance has no tunnel network and crashed; it is one connection like p2p."""
         sockets = {(self.CLIENT_SOCKET, "load-stats"): LOAD_STATS, (self.CLIENT_SOCKET, "state 1"): STATE_CONNECTED}
         with FakeOPNsense(instances_config(INSTANCE_CLIENT), sockets=sockets, now=NOW) as checker:
             lines = checker.checklocal_openvpn()
@@ -143,8 +144,8 @@ class TestOpenVPNInstances(unittest.TestCase):
         self.assertEqual(len(conns), 1, lines)
         self.assertTrue(conns[0].startswith("0 "), conns[0])
 
-    @unittest.expectedFailure  # an unreachable management socket raises (bare "raise") instead of reporting "Server down"
     def test_server_instance_socket_down(self):
+        """an unreachable management socket stopped the check (bare raise) instead of reporting Server down."""
         with FakeOPNsense(instances_config(INSTANCE_SERVER, INSTANCE_SERVER.replace("1111", "aaaa")), now=NOW) as checker:
             lines = checker.checklocal_openvpn()
         self.assertTrue(any(l.startswith('2 "OpenVPN Server: Roadwarrior"') and "Server down" in l for l in lines), lines)
@@ -154,6 +155,64 @@ class TestOpenVPNInstances(unittest.TestCase):
         with FakeOPNsense(instances_config(disabled, disabled.replace("1111", "bbbb")), now=NOW) as checker:
             lines = checker.checklocal_openvpn()
         self.assertEqual(local_lines(lines, "OpenVPN"), [])
+
+
+# real data from the test VM (OPNsense 26.7.9, OpenVPN 2.7.9): tests/fixtures/openvpn-26.7
+VM_CERTS = (cert_xml("testserver", "server.vpn.test", 400) + cert_xml("testclient", "client.vpn.test", 45)
+            + cert_xml("testclient2", "client2.vpn.test", 400))
+VM_SOCKETS = {(path, cmd): answer for path, answers in json.loads(fixture("openvpn-26.7", "sockets.json")).items()
+              for cmd, answer in answers.items()}
+
+
+def vm_check(config=None, sockets=None):
+    config = config or fixture("openvpn-26.7", "config.xml")
+    with FakeOPNsense(config_xml(VM_CERTS + config), sockets=VM_SOCKETS if sockets is None else sockets) as checker:
+        return checker.checklocal_openvpn()
+
+
+class TestOpenVPNRealVM(unittest.TestCase):
+    def test_all_tunnels(self):
+        """legacy server + p2p client, server instance, client instance connected and one not connected."""
+        lines = vm_check()
+        self.assertEqual(sorted(l.split('"')[1] for l in lines), [
+            "OpenVPN Connection: Legacy Branch", "OpenVPN Connection: Site B", "OpenVPN Connection: Site Nowhere",
+            "OpenVPN Server: Legacy Office", "OpenVPN Server: Roadwarrior"], lines)
+        expected = {
+            "OpenVPN Server: Roadwarrior": ("0 ", "1/254 Connections Port:1194/udp"),
+            "OpenVPN Server: Legacy Office": ("0 ", "1/254 Connections Port:1195/UDP4"),
+            "OpenVPN Connection: Site B": ("1 ", "Connected 127.0.0.1:1194 10.8.0.2"),  # client cert expires in 45 days
+            "OpenVPN Connection: Legacy Branch": ("0 ", "Connected 127.0.0.1:1195 10.18.0.2"),
+            "OpenVPN Connection: Site Nowhere": ("2 ", " WAIT "),
+        }
+        for name, (state, text) in expected.items():
+            line = local_lines(lines, name)[0]
+            self.assertTrue(line.startswith(state), line)
+            self.assertIn(text, line)
+
+    def test_server_down(self):
+        sockets = {k: v for k, v in VM_SOCKETS.items() if not k[0].endswith(("server1.sock", "fb5f99ce-988f-4adb-86be-a380a5482fe9.sock"))}
+        lines = vm_check(sockets=sockets)
+        for name in ("OpenVPN Server: Legacy Office", "OpenVPN Server: Roadwarrior"):
+            line = local_lines(lines, name)[0]
+            self.assertTrue(line.startswith("2 ") and "Server down" in line, line)
+        self.assertEqual(len(lines), 5, lines)
+
+    def test_monitored_client_with_openvpn_27_address(self):
+        """OpenVPN 2.7 writes the real address as udp4:127.0.0.1:21884."""
+        overwrite = ("<Overwrites><Overwrite uuid=\"o1\"><enabled>1</enabled><common_name>client.vpn.test</common_name>"
+                     "<description>Site B office</description></Overwrite></Overwrites>")
+        config = fixture("openvpn-26.7", "config.xml").replace("<Overwrites/>", overwrite)
+        line = local_lines(vm_check(config), "OpenVPN Client: Site B office")[0]
+        self.assertIn("Server:Roadwarrior 127.0.0.1:10.8.0.2 AES-256-GCM", line)
+        self.assertRegex(line, r"connections_ssl_vpn=1\|")
+
+    def test_legacy_only_single_entries(self):
+        """#82: a single legacy server and client (dict instead of list) without instances."""
+        config = fixture("openvpn-26.7", "config.xml")
+        config = config[:config.index("<OPNsense>")]
+        lines = vm_check(config)
+        self.assertEqual(sorted(l.split('"')[1] for l in lines),
+                         ["OpenVPN Connection: Legacy Branch", "OpenVPN Server: Legacy Office"], lines)
 
 
 if __name__ == "__main__":

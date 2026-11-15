@@ -49,12 +49,18 @@ Zu einzelnen Services:
 - **CARP:** Ein Knoten mit `advskew` unter 50 soll MASTER sein, einer mit 50 oder mehr BACKUP. Der Text zeigt den
   Demotion-Level (`demotion:`, `sysctl net.inet.carp.demotion`).
 - **Gateway:** nur Gateways mit eingeschalteter Überwachung (dpinger). Metriken: Laufzeit, Abweichung, Verlust.
-- **OpenVPN:** Altes Modell (Server/Clients unter VPN › OpenVPN, „Legacy“) und Instanzen. Mit den Instanzen gibt
-  es bekannte Fehler ([Bekannte Probleme](../03-fehlerbehebung/02-bekannte-probleme.md)).
+- **OpenVPN:** Instanzen (VPN › OpenVPN › Instanzen) und das alte Modell („Legacy“, ab OPNsense 26.1 im Plugin
+  `os-openvpn-legacy`), auch beide nebeneinander. Server mit mehreren Clients ergeben `OpenVPN Server: <Name>` mit
+  der Zahl der Verbindungen; Client-Instanzen, Legacy-Clients und Peer-to-Peer-Server ergeben
+  `OpenVPN Connection: <Name>`. Clients mit einem Client-Overwrite (Client-spezifische Einstellungen) erscheinen
+  zusätzlich als `OpenVPN Client: <Name>`. Deaktivierte Tunnel erscheinen nicht.
 - **IPsec:** nur wenn IPsec eingeschaltet ist, und nur das alte Tunnel-Modell (Phase 1/2), noch nicht die Verbindungen (swanctl) ab OPNsense 23.1.
 - **NetBird** ab 1.2.18, wenn `netbird` installiert ist (Plugin `os-netbird`): ein Service für den Daemon und je
   Peer einer, aus `netbird status --json`. Metriken: verbundene, gesamte und über Relay verbundene Peers; je Peer
   Latenz, Alter des letzten Handshakes und Traffic.
+- **Geändert in 1.2.18 (OpenVPN):** Bis 1.2.17 fehlten Instanzen ganz oder der Check scheiterte (mehrere
+  Instanzen, Client-Instanzen, ein einzelner Legacy-Server). Ab 1.2.18 erscheinen alle; nach dem Update in Checkmk
+  die Service-Erkennung ausführen. Ein Server, dessen Prozess nicht läuft, ist CRIT mit „Server down“.
 - **WireGuard** ab 1.2.18: Peers ohne Endpoint-Adresse (Roadwarrior: Handy, Laptop) sind nur verbunden, solange sie
   genutzt werden; getrennt bleiben sie OK. Deaktivierte Peers und Peers nur an deaktivierten Instanzen erscheinen
   nicht. Der Text beginnt mit `online` oder `offline`.
