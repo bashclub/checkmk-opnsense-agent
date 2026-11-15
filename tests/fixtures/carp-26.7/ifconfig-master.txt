@@ -1,0 +1,15 @@
+vtnet0: flags=1008943<UP,BROADCAST,RUNNING,PROMISC,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500
+	description: LAN (lan)
+	options=880008<VLAN_MTU,LINKSTATE,HWSTATS>
+	capabilities=990008<VLAN_MTU,VLAN_HWFILTER,LINKSTATE,NETMAP,HWSTATS>
+	ether bc:24:11:72:51:42
+	inet 10.91.0.185/24 broadcast 10.91.0.255
+	inet 10.91.0.190/24 broadcast 10.91.0.255 vhid 91
+	carp: MASTER vhid 91 advbase 1 advskew 0
+	      peer 224.0.0.18 peer6 ff02::12
+	media: Ethernet autoselect (10Gbase-T <full-duplex>)
+	status: active
+	supported media:
+		media autoselect
+	nd6 options=29<PERFORMNUD,IFDISABLED,AUTO_LINKLOCAL>
+	drivername: vtnet0

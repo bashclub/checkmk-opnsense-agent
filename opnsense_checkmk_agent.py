@@ -867,14 +867,60 @@ class checkmk_checker(object):
             _interface, _carpstatus = self._carp_interfaces.get(_vhid,(None,None))
             _carpstatus_num = 1 if _carpstatus == "MASTER" else 0
             _interface_name = self._all_interfaces.get(_interface,{}).get("interface_name",_interface)
-            if int(_vip.get("advskew")) < 50:
-                _status = 0 if _carpstatus == "MASTER" else 1
-            else:
-                _status = 0 if _carpstatus == "BACKUP" else 1
+            ## the node with advskew below 50 is expected to be MASTER, the other one BACKUP (#48)
+            try:
+                _advskew = int(_vip.get("advskew") or 0)
+            except ValueError:
+                _advskew = 0
+            _expected = "MASTER" if _advskew < 50 else "BACKUP"
+            _status = 0 if _carpstatus == _expected else 1
             if not _interface:
                 continue
-            _ret.append(f"{_status} \"CARP: {_interface_name}@{_vhid}\" master={_carpstatus_num} {_carpstatus} {_ipaddr} ({_interface}) demotion:{_carp_demotion}")
+            _note = "" if _status == 0 else f", expected {_expected} (advskew {_advskew} {'<' if _advskew < 50 else '>='} 50)"
+            _ret.append(f"{_status} \"CARP: {_interface_name}@{_vhid}\" master={_carpstatus_num} {_carpstatus} {_ipaddr} ({_interface}) demotion:{_carp_demotion} advskew:{_advskew}{_note}")
         return _ret
+
+    def _carp_states(self):
+        ## {(real interface, vhid): MASTER|BACKUP|INIT} from ifconfig, independent of check_net (skipcheck net)
+        _ret = {}
+        for _interface, _data in re.findall(r"^([\w.]+):\s(.*?)(?=^[\w.]+:\s|\Z)",self._run_prog("ifconfig -a"),re.DOTALL | re.M):
+            for _state, _vhid in re.findall(r"^\s+carp:\s(\w+)\svhid\s(\d+)",_data,re.M):
+                _ret[(_interface,_vhid)] = _state
+        return _ret
+
+    def _carp_inactive_vips(self):
+        ## CARP VIPs that are not MASTER on this node: {reference: text}; references are what tunnels use to bind to a VIP:
+        ## uuid (OpenVPN instance carp_depend_on), "<if>_vip<vhid>" (legacy), "_vip<uuid>", the address itself
+        _ret = {}
+        _config = self._config_reader()
+        _vips = self._as_list((_config.get("virtualip") or {}).get("vip"))
+        if not any(_vip.get("mode") == "carp" for _vip in _vips):
+            return _ret
+        _interfaces = _config.get("interfaces") or {}
+        _states = self._carp_states()
+        for _vip in _vips:
+            if _vip.get("mode") != "carp":
+                continue
+            _vhid = _vip.get("vhid")
+            _real = (_interfaces.get(_vip.get("interface")) or {}).get("if")
+            _state = _states.get((_real,_vhid)) or next((_st for (_if,_vh), _st in _states.items() if _vh == _vhid),"INIT")
+            if _state == "MASTER":
+                continue
+            _text = f"CARP {_state} on {_vip.get('subnet')} (vhid {_vhid})"
+            for _reference in (_vip.get("@uuid"),_vip.get("uniqid"),f"{_vip.get('interface')}_vip{_vhid}",f"_vip{_vip.get('@uuid')}",f"_vip{_vip.get('uniqid')}",_vip.get("subnet")):
+                if _reference and not _reference.endswith("None"):
+                    _ret[_reference] = _text
+        return _ret
+
+    @staticmethod
+    def _carp_inactive_line(line,inactive_vips,*references):
+        ## a tunnel bound to a CARP VIP that is not MASTER here cannot be up on this node: OK with a note (#76)
+        _note = next((inactive_vips[_ref] for _ref in references if _ref and _ref in inactive_vips),None)
+        if not _note or line.startswith("0 "):
+            return line
+        _name_end = line.index('" ',2) + 2
+        _metrics, _, _text = line[_name_end:].partition(" ")
+        return f"0 {line[2:_name_end]}{_metrics} {_note}, tunnel only runs on the master: {_text}"
 
     def check_dhcp(self):
         _pools = set()
@@ -1143,6 +1189,7 @@ class checkmk_checker(object):
                         "subnet"         : _entry.get("topology_subnet") == "yes",
                         "maxclients"     : _entry.get("maxclients"),
                         "certref"        : _entry.get("certref"),
+                        "carp"           : [_entry.get("interface"),_entry.get("local_addr")],
                         "socket"         : "/var/etc/openvpn/{0}{1}.sock".format(_type,_entry.get("vpnid")),
                     })
         _ovpn = (_config.get("OPNsense") or {}).get("OpenVPN")
@@ -1163,6 +1210,7 @@ class checkmk_checker(object):
                 "subnet"         : _entry.get("topology") == "subnet",
                 "maxclients"     : _entry.get("maxclients"),
                 "certref"        : _entry.get("cert"),
+                "carp"           : [_entry.get("carp_depend_on"),_entry.get("local")],
                 "socket"         : "/var/etc/openvpn/instance-{0}.sock".format(_entry.get("@uuid")),
             })
         for _tunnel in _ret:
@@ -1222,7 +1270,8 @@ class checkmk_checker(object):
                 _monitored_clients[_overwrite.get("common_name").upper()] = dict(_overwrite,current=[])
 
         _now = time.time()
-        for _server in self._openvpn_tunnels():
+        _tunnels = self._openvpn_tunnels()
+        for _server in _tunnels:
             _server_cert = self._get_certificate(_server.get("certref"))
             _server["status"] = 0
             _server["expiredays"] = 0
@@ -1296,6 +1345,14 @@ class checkmk_checker(object):
 
             _server["clientcount"] = len(_clients)
             _ret.append('{status} "OpenVPN Server: {name}" connections_ssl_vpn={clientcount};;{maxclients}|if_in_octets={bytesin}|if_out_octets={bytesout}|expiredays={expiredays} {clientcount}/{maxclients} Connections Port:{local_port}/{protocol} {expiredate}'.format(**_server))
+
+        _inactive_vips = self._carp_inactive_vips()
+        if _inactive_vips:
+            _references = {_tunnel["name"]: _tunnel["carp"] for _tunnel in _tunnels}
+            for _index, _line in enumerate(_ret):
+                _name = re.search(r'"OpenVPN (?:Server|Connection): (.*?)"',_line)
+                if _name:
+                    _ret[_index] = self._carp_inactive_line(_line,_inactive_vips,*_references.get(_name.group(1),[]))
 
         for _client in _monitored_clients.values():
             _current_conn = _client.get("current",[])
@@ -1398,11 +1455,13 @@ class checkmk_checker(object):
         if type(_json_data) != dict:
             _json_data = {}
 
+        _inactive_vips = self._carp_inactive_vips()
         for _phase1 in self._as_list(_ipsec_config.get("phase1")):
             if "disabled" in _phase1:
                 continue
             _name = (_phase1.get("descr") or "").strip() or _phase1.get("remote-gateway") or "con{0}".format(_phase1.get("ikeid"))
-            _ret.append(self._ipsec_tunnel(_name,_json_data.get("con{0}".format(_phase1.get("ikeid")),{})))
+            _line = self._ipsec_tunnel(_name,_json_data.get("con{0}".format(_phase1.get("ikeid")),{}))
+            _ret.append(self._carp_inactive_line(_line,_inactive_vips,_phase1.get("interface")))
 
         _swanctl = (_config.get("OPNsense") or {}).get("Swanctl") or {}
         _children = self._as_list((_swanctl.get("children") or {}).get("child"))
@@ -1413,7 +1472,8 @@ class checkmk_checker(object):
             _name = (_connection.get("description") or "").strip() or _connection.get("remote_addrs") or _uuid
             _required = dict((_child.get("@uuid"),(_child.get("description") or "").strip() or _child.get("@uuid"))
                              for _child in _children if _child.get("connection") == _uuid and _child.get("enabled") == "1")
-            _ret.append(self._ipsec_tunnel(_name,_json_data.get(_uuid,{}),_required))
+            _line = self._ipsec_tunnel(_name,_json_data.get(_uuid,{}),_required)
+            _ret.append(self._carp_inactive_line(_line,_inactive_vips,*(_connection.get("local_addrs") or "").replace(" ","").split(",")))
         return _ret
 
     def checklocal_wireguard(self):

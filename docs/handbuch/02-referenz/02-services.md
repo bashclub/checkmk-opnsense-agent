@@ -46,8 +46,15 @@ Zu einzelnen Services:
   ```
 - **Audit:** `pkg audit` vergleicht die installierten Pakete mit der Liste bekannter Sicherheitslücken. Die Warnung
   verschwindet, wenn die OPNsense ein korrigiertes Paket ausliefert; Details zeigt `pkg audit -F` auf der Shell.
-- **CARP:** Ein Knoten mit `advskew` unter 50 soll MASTER sein, einer mit 50 oder mehr BACKUP. Der Text zeigt den
-  Demotion-Level (`demotion:`, `sysctl net.inet.carp.demotion`).
+- **CARP:** Ein Knoten mit `advskew` unter 50 soll MASTER sein, einer mit 50 oder mehr BACKUP; empfohlen sind 0 auf
+  dem ersten und 100 auf dem zweiten Knoten. Haben beide Knoten `advskew` unter 50, ist der CARP-Service auf dem
+  Backup-Knoten WARN; ab 1.2.18 nennt der Text dann den erwarteten Zustand (`expected MASTER (advskew 1 < 50)`).
+  Der Text zeigt außerdem den Demotion-Level (`demotion:`, `sysctl net.inet.carp.demotion`).
+- **VPN auf dem CARP-Backup-Knoten:** Ab 1.2.18 sind OpenVPN- und IPsec-Tunnel, die an eine CARP-VIP gebunden sind,
+  auf dem Knoten OK, auf dem diese VIP nicht MASTER ist; der Text beginnt mit `CARP BACKUP on <VIP> …, tunnel only
+  runs on the master:`. Gebunden heißt: OpenVPN-Instanz mit „CARP Depend on“ oder lokaler Adresse der VIP, alter
+  OpenVPN-Tunnel auf einem VIP-Interface, IPsec-Verbindung mit der VIP als lokaler Adresse, alter IPsec-Tunnel auf
+  einem VIP-Interface. Andere Tunnel werden auf beiden Knoten normal bewertet.
 - **Gateway:** nur Gateways mit eingeschalteter Überwachung (dpinger). Metriken: Laufzeit, Abweichung, Verlust.
 - **OpenVPN:** Instanzen (VPN › OpenVPN › Instanzen) und das alte Modell („Legacy“, ab OPNsense 26.1 im Plugin
   `os-openvpn-legacy`), auch beide nebeneinander. Server mit mehreren Clients ergeben `OpenVPN Server: <Name>` mit
