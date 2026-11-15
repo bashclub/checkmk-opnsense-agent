@@ -126,6 +126,14 @@ class TestConfigFile(unittest.TestCase):
             self.assertTrue(server.verify_request(None, ("::ffff:192.0.2.99", 1, 0, 0)))
             self.assertEqual(server.skipservice, [])
 
+    def test_netbird_idle_option(self):
+        agent = load_agent()
+        with mock.patch.object(agent, "log") as log:
+            self.assertEqual(make_server(agent, netbird_idle="WARN").netbird_idle, "warn")
+            self.assertEqual(make_server(agent, netbird_idle="sometimes").netbird_idle, "ok")
+            self.assertEqual(make_server(agent).netbird_idle, "ok")
+        self.assertIn("netbird_idle: 'sometimes' unknown, use ok, warn or crit", [c.args[0] for c in log.call_args_list])
+
     def test_encrypt_from_command_line_wins(self):
         agent = load_agent()
         self.write("encrypt: from-file\n", 1000)

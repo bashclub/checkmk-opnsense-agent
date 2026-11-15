@@ -183,8 +183,8 @@ def client_ip(address):
         return None
     return str(getattr(_ip,"ipv4_mapped",None) or _ip)
 
-CONFIG_OPTIONS = ("port","encrypt","onlyfrom","expire_inventory","skipcheck","skipservice","skipcert","tenants","localdir","plugindir","spooldir")
-RELOADABLE_OPTIONS = ("encrypt","onlyfrom","skipcheck","skipservice","skipcert","tenants") ## the running daemon applies changes of these
+CONFIG_OPTIONS = ("port","encrypt","onlyfrom","expire_inventory","skipcheck","skipservice","skipcert","netbird_idle","tenants","localdir","plugindir","spooldir")
+RELOADABLE_OPTIONS = ("encrypt","onlyfrom","skipcheck","skipservice","skipcert","netbird_idle","tenants") ## the running daemon applies changes of these
 
 def read_config(path):
     ## {option: value} of the config file, lines "name: value"; other lines and unknown options are logged
@@ -266,6 +266,7 @@ class checkmk_handler(StreamRequestHandler):
 class checkmk_checker(object):
     skipservice = [] ## OPNsense services that may be stopped (option skipservice), lower case
     skipcert = [] ## certificates (description, common name or refid) without service (option skipcert), lower case
+    netbird_idle = "ok" ## state of an idle NetBird peer: ok, warn or crit (option netbird_idle)
     _available_sysctl_list = []
     _available_sysctl_temperature_list = []
     _ipaccess_log = {}
@@ -1826,7 +1827,10 @@ class checkmk_checker(object):
                 _service_status = 0
                 if _last_handshake and _handshake_age > 300:
                     _service_status = 1
-            elif _status_text in ("connecting","idle"):
+            elif _status_text == "idle":
+                ## offline peer or lazy connection not needed right now: OK unless netbird_idle says otherwise
+                _service_status = {"ok": 0,"warn": 1,"crit": 2}.get(self.netbird_idle,0)
+            elif _status_text == "connecting":
                 _service_status = 1
             else:
                 _service_status = 2
@@ -2416,10 +2420,10 @@ class checkmk_cached_process(object):
 
 class checkmk_server(TCPServer,checkmk_checker):
     address_family = socket.AF_INET6
-    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,skipcert=None,expire_inventory=0,tenants=None,configfile=None,cli_options=None,**kwargs):
+    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,skipcert=None,netbird_idle=None,expire_inventory=0,tenants=None,configfile=None,cli_options=None,**kwargs):
         self.tcp_port = port
         self.pidfile = pidfile
-        self._apply_options(onlyfrom=onlyfrom,encrypt=encrypt,skipcheck=skipcheck,skipservice=skipservice,skipcert=skipcert,tenants=tenants)
+        self._apply_options(onlyfrom=onlyfrom,encrypt=encrypt,skipcheck=skipcheck,skipservice=skipservice,skipcert=skipcert,netbird_idle=netbird_idle,tenants=tenants)
         ## a changed config file is applied by the running daemon (RELOADABLE_OPTIONS), see _reload_config
         self.configfile = configfile
         self._cli_options = cli_options if cli_options is not None else {}
@@ -2433,7 +2437,7 @@ class checkmk_server(TCPServer,checkmk_checker):
         self.taskrunner = checkmk_taskrunner(self)
         TCPServer.__init__(self,("",port),checkmk_handler,bind_and_activate=False)
 
-    def _apply_options(self,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,skipcert=None,tenants=None):
+    def _apply_options(self,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,skipcert=None,netbird_idle=None,tenants=None):
         ## onlyfrom set: only these addresses, without a valid address nobody (fail closed)
         self.onlyfrom = parse_ip_list(onlyfrom,"onlyfrom",networks=True) if onlyfrom is not None else None
         if self.onlyfrom == []:
@@ -2442,6 +2446,10 @@ class checkmk_server(TCPServer,checkmk_checker):
         self.skipcheck = [_c.strip() for _c in skipcheck.split(",") if _c.strip()] if skipcheck else []
         self.skipservice = [_s.strip().lower() for _s in skipservice.split(",") if _s.strip()] if skipservice else []
         self.skipcert = [_s.strip().lower() for _s in skipcert.split(",") if _s.strip()] if skipcert else []
+        self.netbird_idle = (netbird_idle or "ok").strip().lower()
+        if self.netbird_idle not in ("ok","warn","crit"):
+            log(f"netbird_idle: '{netbird_idle}' unknown, use ok, warn or crit","warning")
+            self.netbird_idle = "ok"
         self.tenants = self._get_tenants(tenants) if type(tenants) == str else {}
 
     def _get_config_mtime(self):
@@ -3266,6 +3274,8 @@ if __name__ == "__main__":
         help=_("comma seperated OPNsense services (name or description) that may be stopped without CRIT in 'Services'"))
     _parser.add_argument("--skipcert",type=str,
         help=_("comma seperated certificates (description, common name or refid) without service 'Certificate'"))
+    _parser.add_argument("--netbird_idle",type=str,choices=("ok","warn","crit"),
+        help=_("state of an idle (offline) NetBird peer, default ok"))
     _parser.add_argument("--zabbix",action="store_true",
         help=_("only output local checks as json for zabbix parsing"))
     _parser.add_argument("--debug",action="store_true",
@@ -3301,6 +3311,8 @@ if __name__ == "__main__":
                 args.skipservice = _v
             if _k == "skipcert":
                 args.skipcert = _v
+            if _k == "netbird_idle":
+                args.netbird_idle = _v
             if _k == "tenants":
                 args.tenants = _v
             if _k.lower() == "localdir":
@@ -3482,10 +3494,10 @@ if __name__ == "__main__":
             print("to start the agent on boot, copy the file to /usr/local/etc/rc.syshook.d/start/")
         print(f"The CHECKMK_BASEDIR is under {BASEDIR} (local,plugin,spool,tasks).")
         print(f"Default config file location is {args.configfile}, create it if it doesn't exist.")
-        print("Config file options port,encrypt,onlyfrom,skipcheck,skipservice,skipcert,tenants with a colon and the value like the commandline option\n")
+        print("Config file options port,encrypt,onlyfrom,skipcheck,skipservice,skipcert,netbird_idle,tenants with a colon and the value like the commandline option\n")
         print("active config:")
         print("-"*35)
-        for _opt in ("port","encrypt","onlyfrom","skipcheck","skipservice","skipcert","tenants"):
+        for _opt in ("port","encrypt","onlyfrom","skipcheck","skipservice","skipcert","netbird_idle","tenants"):
             _val = getattr(args,_opt,None)
             if _val:
                 print(f"{_opt}: {_val}")

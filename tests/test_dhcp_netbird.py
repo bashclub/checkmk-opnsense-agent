@@ -207,9 +207,20 @@ class TestNetBird(unittest.TestCase):
         self.assertIn("Connected P2P 100.90.1.2", peer)
 
     def test_peer_offline(self):
+        """an idle peer (offline laptop or lazy connection) is OK by default."""
         lines = run_netbird(netbird_connected(netbird_peer("laptop", "Idle", "-", "0001-01-01T00:00:00Z")))
         peer = local_lines(lines, "NetBird Peer: laptop.netbird.cloud")[0]
-        self.assertTrue(peer.startswith("1 "), peer)
+        self.assertTrue(peer.startswith("0 "), peer)
+
+    def test_peer_offline_with_option(self):
+        idle = netbird_connected(netbird_peer("laptop", "Idle", "-", "0001-01-01T00:00:00Z"))
+        for option, state in (("warn", "1 "), ("crit", "2 "), ("ok", "0 ")):
+            agent = load_agent()
+            with mock.patch.object(agent.checkmk_checker, "_first_existing_executable", side_effect=lambda *c: "netbird"):
+                with FakeOPNsense(NETBIRD_PLUGIN_ON, commands={"netbird status --json": json.dumps(idle)}, now=NOW) as checker:
+                    checker.netbird_idle = option
+                    peer = local_lines(checker.checklocal_netbird(), "NetBird Peer: laptop.netbird.cloud")[0]
+            self.assertTrue(peer.startswith(state), (option, peer))
 
     def test_broken_json(self):
         with FakeOPNsense(NETBIRD_PLUGIN_ON, commands={"netbird status --json": "{no json"}, now=NOW) as checker:

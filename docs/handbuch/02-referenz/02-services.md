@@ -26,7 +26,7 @@ liefert keinen Service.
 | `openvpn` | `OpenVPN Server: <Name>`, `OpenVPN Client: <Name>`, `OpenVPN Connection: <Name>` | läuft bzw. verbunden | wartet auf Verbindung; Zertifikat läuft in unter 61 Tagen ab | Server down, nicht verbunden; Zertifikat in unter 31 Tagen |
 | `ipsec` | `IPsec Tunnel: <Name>` | Tunnel aufgebaut mit Phase 2 bzw. allen Children | ab 1.2.18: nur ein Teil der Children einer Verbindung aufgebaut | nicht verbunden, IPsec läuft nicht |
 | `wireguard` | `WireGuard Client: <Name>` | verbunden; Roadwarrior auch getrennt | – | Site-to-Site ohne Handshake seit 5 min; Instanz läuft nicht |
-| `netbird` | `NetBird`, `NetBird Peer: <Name>` | ab 1.2.18: Daemon, Management und Signal verbunden; Peer verbunden | Management oder Signal getrennt; Peer `Connecting`/`Idle` oder Handshake älter als 5 min | Daemon nicht verbunden (z. B. `NeedsLogin`), keine Daten; Peer getrennt |
+| `netbird` | `NetBird`, `NetBird Peer: <Name>` | ab 1.2.18: Daemon, Management und Signal verbunden; Peer verbunden | Management oder Signal getrennt; Peer `Connecting` oder Handshake älter als 5 min | Daemon nicht verbunden (z. B. `NeedsLogin`), keine Daten; Peer getrennt |
 | `unbound` | `Unbound DNS` | läuft, mit Anfragen und Cache-Treffern | – | läuft nicht |
 | `certificates` | `Certificate: <Name>`, `CA: <Name>` | ab 1.2.18: läuft noch 30 Tage oder länger | unter 30 Tagen | unter 14 Tagen oder abgelaufen |
 | `acmeclient` | `ACME Cert: <Name>` | Zertifikat erneuert | ausstehend | Fehler, Ablauf in unter 10 Tagen |
@@ -79,7 +79,9 @@ Zu einzelnen Services:
   und Verbindungen erscheinen nicht.
 - **NetBird** ab 1.2.18, wenn NetBird eingeschaltet ist (Plugin `os-netbird` oder `netbird_enable` in `rc.conf`): ein Service für den Daemon und je
   Peer einer, aus `netbird status --json`. Metriken: verbundene, gesamte und über Relay verbundene Peers; je Peer
-  Latenz, Alter des letzten Handshakes und Traffic.
+  Latenz, Alter des letzten Handshakes und Traffic. Ein Peer im Zustand `Idle` (offline, z. B. ein Laptop, oder eine
+  Lazy Connection, die gerade nicht gebraucht wird) ist OK; mit `netbird_idle: warn` bzw. `crit` wird er WARN bzw.
+  CRIT, etwa wenn alle Peers Standortverbindungen sind.
 - **Geändert in 1.2.18 (OpenVPN):** Bis 1.2.17 fehlten Instanzen ganz oder der Check scheiterte (mehrere
   Instanzen, Client-Instanzen, ein einzelner Legacy-Server). Ab 1.2.18 erscheinen alle; nach dem Update in Checkmk
   die Service-Erkennung ausführen. Ein Server, dessen Prozess nicht läuft, ist CRIT mit „Server down“.
