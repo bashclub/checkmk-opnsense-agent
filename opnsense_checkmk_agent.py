@@ -138,6 +138,7 @@ def log(message,prio="notice"):
         "crit"      :syslog.LOG_CRIT,
         "err"       :syslog.LOG_ERR,
         "warning"   :syslog.LOG_WARNING,
+        "warn"      :syslog.LOG_WARNING,
         "notice"    :syslog.LOG_NOTICE, 
         "info"      :syslog.LOG_NOTICE, 
     }.get(str(prio).lower(),syslog.LOG_DEBUG)
