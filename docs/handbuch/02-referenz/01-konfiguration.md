@@ -9,8 +9,8 @@ der Rest einer Zeile ab ` #` (Leerzeichen und `#`; deshalb gehört diese Folge n
 optional. Bei mehrfach genannten Optionen gilt die letzte Zeile. Zeilen ohne `name: wert` (z. B. ohne Doppelpunkt)
 und unbekannte Optionen ignoriert der Agent mit einer Warnung im Systemlog.
 
-Ab 1.2.18 übernimmt der laufende Dienst Änderungen an `onlyfrom`, `encrypt`, `skipcheck`, `skipservice` und
-`tenants` bei der nächsten Abfrage, ohne Neustart (Systemlog: `options reloaded`). `port`, `expire_inventory` und
+Ab 1.2.18 übernimmt der laufende Dienst Änderungen an `onlyfrom`, `encrypt`, `skipcheck`, `skipservice`,
+`skipcert` und `tenants` bei der nächsten Abfrage, ohne Neustart (Systemlog: `options reloaded`). `port`, `expire_inventory` und
 die Verzeichnisse gelten erst nach `--restart`.
 
 ```
@@ -28,6 +28,7 @@ skipservice: ntopng,haproxy
 | `encrypt` | aus | Passwort für die verschlüsselte Ausgabe ([An Checkmk anbinden](../01-einrichtung/02-checkmk-anbinden.md#verschlüsselung)) |
 | `skipcheck` | keine | Checks, die nicht laufen, durch Komma getrennt; die Namen stehen in [Services und Zustände](02-services.md) |
 | `skipservice` | keine | ab 1.2.18: OPNsense-Dienste (Name oder Beschreibung), die gestoppt sein dürfen, durch Komma getrennt ([Services und Zustände](02-services.md)) |
+| `skipcert` | keine | ab 1.2.18: Zertifikate ohne Service (Beschreibung, CN oder refid), durch Komma getrennt |
 | `expire_inventory` | `14400` | Sekunden, nach denen ein Abrufer wieder die Inventur bekommt |
 | `tenants` | keine | Abrufer, die nur Task-Daten bekommen ([Erweiterungen](03-erweiterungen.md#tenants)) |
 | `localdir` | `/usr/local/check_mk_agent/local` | Verzeichnis für eigene lokale Checks |

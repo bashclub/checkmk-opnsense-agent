@@ -183,8 +183,8 @@ def client_ip(address):
         return None
     return str(getattr(_ip,"ipv4_mapped",None) or _ip)
 
-CONFIG_OPTIONS = ("port","encrypt","onlyfrom","expire_inventory","skipcheck","skipservice","tenants","localdir","plugindir","spooldir")
-RELOADABLE_OPTIONS = ("encrypt","onlyfrom","skipcheck","skipservice","tenants") ## the running daemon applies changes of these
+CONFIG_OPTIONS = ("port","encrypt","onlyfrom","expire_inventory","skipcheck","skipservice","skipcert","tenants","localdir","plugindir","spooldir")
+RELOADABLE_OPTIONS = ("encrypt","onlyfrom","skipcheck","skipservice","skipcert","tenants") ## the running daemon applies changes of these
 
 def read_config(path):
     ## {option: value} of the config file, lines "name: value"; other lines and unknown options are logged
@@ -265,6 +265,7 @@ class checkmk_handler(StreamRequestHandler):
 
 class checkmk_checker(object):
     skipservice = [] ## OPNsense services that may be stopped (option skipservice), lower case
+    skipcert = [] ## certificates (description, common name or refid) without service (option skipcert), lower case
     _available_sysctl_list = []
     _available_sysctl_temperature_list = []
     _ipaccess_log = {}
@@ -1811,6 +1812,40 @@ class checkmk_checker(object):
             _ret.append("2 \"Unbound DNS\" dns_successes=0|dns_recursion=0|dns_cachehits=0|dns_cachemiss=0|avg_response_time=0 Unbound not running")
         return _ret
 
+    CERT_WARN_DAYS = 30
+    CERT_CRIT_DAYS = 14
+
+    def checklocal_certificates(self):
+        ## certificates and CAs of System > Trust (#66); ACME certificates have their own service "ACME Cert"
+        _ret = []
+        _config = self._config_reader()
+        _acme = ((_config.get("OPNsense") or {}).get("AcmeClient") or {}).get("certificates") or {}
+        _acme_refids = set(_cert.get("certRefId") for _cert in self._as_list(_acme.get("certificate")))
+        _now = time.time()
+        _names = set()
+        for _kind, _prefix in (("ca","CA"),("cert","Certificate")):
+            for _entry in self._as_list(_config.get(_kind)):
+                if not _entry.get("crt") or _entry.get("refid") in _acme_refids:
+                    continue ## signing request without certificate, or ACME
+                try:
+                    _x509 = x509.load_pem_x509_certificate(base64.b64decode(_entry.get("crt")),crypto_default_backend())
+                except Exception:
+                    continue
+                _cn = self.get_common_name(_x509.subject)
+                _description = (_entry.get("descr") or "").strip() or _cn or _entry.get("refid")
+                if {_description.lower(),_cn.lower(),str(_entry.get("refid")).lower()} & set(self.skipcert):
+                    continue
+                _name = f"{_prefix}: {_description}"
+                if _name in _names: ## two entries with the same description
+                    _name = f"{_name} ({_entry.get('refid')})"
+                _names.add(_name)
+                _notvalidafter = _x509.not_valid_after_utc.timestamp()
+                _days = int((_notvalidafter - _now) // 86400)
+                _expire = time.strftime("%d.%m.%Y",time.localtime(_notvalidafter))
+                _when = f"expired on {_expire}" if _days < 0 else f"expires on {_expire} ({_days} days)"
+                _ret.append(f'P "{_name}" expiredays={_days};{self.CERT_WARN_DAYS}:;{self.CERT_CRIT_DAYS}: CN {_cn}, issuer {self.get_common_name(_x509.issuer)}, {_when}')
+        return _ret
+
     def checklocal_acmeclient(self):
         _ret = []
         _now = time.time()
@@ -2231,10 +2266,10 @@ class checkmk_cached_process(object):
 
 class checkmk_server(TCPServer,checkmk_checker):
     address_family = socket.AF_INET6
-    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,expire_inventory=0,tenants=None,configfile=None,cli_options=None,**kwargs):
+    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,skipcert=None,expire_inventory=0,tenants=None,configfile=None,cli_options=None,**kwargs):
         self.tcp_port = port
         self.pidfile = pidfile
-        self._apply_options(onlyfrom=onlyfrom,encrypt=encrypt,skipcheck=skipcheck,skipservice=skipservice,tenants=tenants)
+        self._apply_options(onlyfrom=onlyfrom,encrypt=encrypt,skipcheck=skipcheck,skipservice=skipservice,skipcert=skipcert,tenants=tenants)
         ## a changed config file is applied by the running daemon (RELOADABLE_OPTIONS), see _reload_config
         self.configfile = configfile
         self._cli_options = cli_options if cli_options is not None else {}
@@ -2248,7 +2283,7 @@ class checkmk_server(TCPServer,checkmk_checker):
         self.taskrunner = checkmk_taskrunner(self)
         TCPServer.__init__(self,("",port),checkmk_handler,bind_and_activate=False)
 
-    def _apply_options(self,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,tenants=None):
+    def _apply_options(self,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,skipcert=None,tenants=None):
         ## onlyfrom set: only these addresses, without a valid address nobody (fail closed)
         self.onlyfrom = parse_ip_list(onlyfrom,"onlyfrom",networks=True) if onlyfrom is not None else None
         if self.onlyfrom == []:
@@ -2256,6 +2291,7 @@ class checkmk_server(TCPServer,checkmk_checker):
         self.encrypt = encrypt or None
         self.skipcheck = [_c.strip() for _c in skipcheck.split(",") if _c.strip()] if skipcheck else []
         self.skipservice = [_s.strip().lower() for _s in skipservice.split(",") if _s.strip()] if skipservice else []
+        self.skipcert = [_s.strip().lower() for _s in skipcert.split(",") if _s.strip()] if skipcert else []
         self.tenants = self._get_tenants(tenants) if type(tenants) == str else {}
 
     def _get_config_mtime(self):
@@ -3078,6 +3114,8 @@ if __name__ == "__main__":
         help=_("R|comma seperated checks that will be skipped \n{0}".format("\n".join([", ".join(_checks_available[i:i+10]) for i in range(0,len(_checks_available),10)]))))
     _parser.add_argument("--skipservice",type=str,
         help=_("comma seperated OPNsense services (name or description) that may be stopped without CRIT in 'Services'"))
+    _parser.add_argument("--skipcert",type=str,
+        help=_("comma seperated certificates (description, common name or refid) without service 'Certificate'"))
     _parser.add_argument("--zabbix",action="store_true",
         help=_("only output local checks as json for zabbix parsing"))
     _parser.add_argument("--debug",action="store_true",
@@ -3111,6 +3149,8 @@ if __name__ == "__main__":
                 args.skipcheck = _v
             if _k == "skipservice":
                 args.skipservice = _v
+            if _k == "skipcert":
+                args.skipcert = _v
             if _k == "tenants":
                 args.tenants = _v
             if _k.lower() == "localdir":
@@ -3292,10 +3332,10 @@ if __name__ == "__main__":
             print("to start the agent on boot, copy the file to /usr/local/etc/rc.syshook.d/start/")
         print(f"The CHECKMK_BASEDIR is under {BASEDIR} (local,plugin,spool,tasks).")
         print(f"Default config file location is {args.configfile}, create it if it doesn't exist.")
-        print("Config file options port,encrypt,onlyfrom,skipcheck,skipservice with a colon and the value like the commandline option\n")
+        print("Config file options port,encrypt,onlyfrom,skipcheck,skipservice,skipcert,tenants with a colon and the value like the commandline option\n")
         print("active config:")
         print("-"*35)
-        for _opt in ("port","encrypt","onlyfrom","skipcheck","skipservice","tenants"):
+        for _opt in ("port","encrypt","onlyfrom","skipcheck","skipservice","skipcert","tenants"):
             _val = getattr(args,_opt,None)
             if _val:
                 print(f"{_opt}: {_val}")

@@ -28,6 +28,7 @@ liefert keinen Service.
 | `wireguard` | `WireGuard Client: <Name>` | verbunden; Roadwarrior auch getrennt | – | Site-to-Site ohne Handshake seit 5 min; Instanz läuft nicht |
 | `netbird` | `NetBird`, `NetBird Peer: <Name>` | ab 1.2.18: Daemon, Management und Signal verbunden; Peer verbunden | Management oder Signal getrennt; Peer `Connecting`/`Idle` oder Handshake älter als 5 min | Daemon nicht verbunden (z. B. `NeedsLogin`), keine Daten; Peer getrennt |
 | `unbound` | `Unbound DNS` | läuft, mit Anfragen und Cache-Treffern | – | läuft nicht |
+| `certificates` | `Certificate: <Name>`, `CA: <Name>` | ab 1.2.18: läuft noch 30 Tage oder länger | unter 30 Tagen | unter 14 Tagen oder abgelaufen |
 | `acmeclient` | `ACME Cert: <Name>` | Zertifikat erneuert | ausstehend | Fehler, Ablauf in unter 10 Tagen |
 | `nginx` | `Nginx Uptime`, `Nginx Location: <Name>` | läuft, Upstreams erreichbar | Upstream teilweise erreichbar, keine Daten | nginx läuft nicht, Upstream down |
 
@@ -55,6 +56,13 @@ Zu einzelnen Services:
   runs on the master:`. Gebunden heißt: OpenVPN-Instanz mit „CARP Depend on“ oder lokaler Adresse der VIP, alter
   OpenVPN-Tunnel auf einem VIP-Interface, IPsec-Verbindung mit der VIP als lokaler Adresse, alter IPsec-Tunnel auf
   einem VIP-Interface. Andere Tunnel werden auf beiden Knoten normal bewertet.
+- **Certificate/CA** ab 1.2.18: jedes Zertifikat und jede CA unter System › Sicherheit › Zertifikate bzw.
+  Autoritäten, Name ist die Beschreibung. Metrik `expiredays`; die Schwellwerte 30/14 Tage gibt der Agent mit,
+  Checkmk bewertet sie. Zertifikate des ACME-Clients fehlen hier, die überwacht `ACME Cert`. Alte Zertifikate (z. B.
+  von ausgeschiedenen VPN-Benutzern) nimmt `skipcert` aus: Beschreibung, CN oder refid, durch Komma getrennt:
+  ```
+  skipcert: VPN alice,bob.example.org
+  ```
 - **Gateway:** nur Gateways mit eingeschalteter Überwachung (dpinger). Metriken: Laufzeit, Abweichung, Verlust.
 - **OpenVPN:** Instanzen (VPN › OpenVPN › Instanzen) und das alte Modell („Legacy“, ab OPNsense 26.1 im Plugin
   `os-openvpn-legacy`), auch beide nebeneinander. Server mit mehreren Clients ergeben `OpenVPN Server: <Name>` mit
