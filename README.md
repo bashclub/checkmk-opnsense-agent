@@ -34,6 +34,12 @@ The local check `Checkmk Agent Update` looks once a day for a new version on cod
 update is available (release users are only told about releases, testing users also about newer testing versions).
 Without internet access it stays OK. To switch it off, add `agentupdate` to `skipcheck` in `/usr/local/etc/checkmk.conf`.
 
+## Documentation
+
+The handbook (German, English to follow) is in [docs/handbuch](docs/handbuch/_collection.md): installation,
+connecting to Checkmk (`onlyfrom`, encryption), all options and services, troubleshooting and known issues. It will
+be published on docs.bashclub.org with a release. Planned features: [ROADMAP.md](ROADMAP.md).
+
 ## Tests
 
 The tests run without an OPNsense: `tests/harness.py` feeds the checks with test data for `config.xml`, program
