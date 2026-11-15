@@ -52,6 +52,7 @@ Kommandozeilen-Optionen (`--port`, `--encrypt`, …) gelten nur, wenn die Option
 | `--configdebug` | `/conf/config.xml` so, wie der Agent sie liest, als JSON |
 | `--zabbix` | nur die lokalen Checks als JSON |
 | `--update [testing]` | Agent aktualisieren ([Updates](../01-einrichtung/03-updates.md)) |
+| `--port`, `--encrypt`, `--onlyfrom`, `--skipcheck`, `--skipservice`, `--skipcert`, `--netbird_idle`, `--expire_inventory` | wie die Optionen der Datei; die Datei hat Vorrang, außer bei `--encrypt` |
 | `--config datei` | andere Konfigurationsdatei |
 | `--pidfile datei` | PID-Datei, Standard `/var/run/checkmk_agent.pid` |
 | `-h`, `--help` | Hilfe, aktive Konfiguration und gefundene Tasks |

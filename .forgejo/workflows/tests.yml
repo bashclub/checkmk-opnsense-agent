@@ -17,3 +17,5 @@ jobs:
         run: DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 python3-cryptography python3-requests
       - name: Tests
         run: python3 -m unittest discover -s tests -v
+      - name: Handbuch
+        run: tests/handbuch.sh

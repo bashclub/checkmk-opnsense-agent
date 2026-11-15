@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: BSD-2-Clause
+name: handbuch
+# Das Handbuch (docs/handbuch) geht nach Outline (docs.bashclub.org, Collection „OPNsense Agent for Checkmk“).
+# Jeder PR prüft es und zeigt, welche Seiten sich ändern würden; jeder Push auf main (= Release) veröffentlicht sie
+# (docs/handbuch/ci.sh). Veröffentlicht werden nur Seiten, deren aufbereiteter Text sich gegenüber dem vorigen Stand
+# ändert, auch der Link „Weiter“ eines Nachbarn. Neue Artikel werden zuerst von Hand angelegt
+# (docs/handbuch/README.md, Veröffentlichen).
+# Secret OUTLINE_API_KEY: API-Schlüssel (Bereich write) eines Outline-Benutzers mit „Kann bearbeiten“ auf der
+# Collection. Die Startseite (Beschreibung der Collection) braucht „Verwalten“, sonst wird sie übersprungen.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/handbuch/**"
+      - "tests/handbuch.sh"
+      - ".forgejo/workflows/handbuch.yml"
+  pull_request:
+    paths:
+      - "docs/handbuch/**"
+      - "tests/handbuch.sh"
+      - ".forgejo/workflows/handbuch.yml"
+  # alle Seiten neu veröffentlichen (z. B. nach Änderungen direkt in Outline oder einem fehlgeschlagenen Lauf)
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: debian-13
+    steps:
+      - name: Werkzeuge
+        run: |
+          command -v git > /dev/null && command -v python3 > /dev/null || {
+            apt-get update -qq && apt-get install -y -qq ca-certificates git python3 > /dev/null; }
+      - name: Quellstand holen
+        run: |
+          rm -rf src && git init -q src && cd src
+          # volle Historie: der vorige Stand (github.event.before) wird zum Vergleich gebraucht
+          git fetch -q "${{ github.server_url }}/${{ github.repository }}" "${{ github.ref }}"
+          git checkout -q FETCH_HEAD
+          # im PR der Zielbranch, um den Stand vor dem PR zu kennen
+          [ -z "${{ github.base_ref }}" ] || git fetch -q "${{ github.server_url }}/${{ github.repository }}" "refs/heads/${{ github.base_ref }}:refs/base"
+          git log -1 --oneline
+      - name: Prüfen und nach Outline
+        env:
+          OUTLINE_API_KEY: ${{ secrets.OUTLINE_API_KEY }}
+          BEFORE: ${{ github.event.before }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          cd src
+          case $EVENT in
+            pull_request) docs/handbuch/ci.sh pull_request refs/base ;;
+            push) docs/handbuch/ci.sh push "$BEFORE" ;;
+            *) docs/handbuch/ci.sh all ;;
+          esac

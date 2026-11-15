@@ -1,11 +1,14 @@
 # Handbuch checkmk-opnsense-agent: Regeln für Autoren
 
-Das Handbuch entsteht hier im Repo und soll nach Outline (docs.bashclub.org) veröffentlicht werden, wie die
-Handbücher von bashclub-zsync und trmm-web-relay. **Noch nicht veröffentlicht:** Die Collection, `render.py`, `ci.sh`
-und der Workflow `.forgejo/workflows/handbuch.yml` kommen mit dem ersten Release, das das Handbuch enthält. Die Vorlage
-dafür ist trmm-web-relay: Jeder Push auf `main` veröffentlicht die geänderten Seiten. Weil `main` hier nur Releases
-bekommt, zeigt Outline immer den Stand des aktuellen Releases; `testing` ändert das Handbuch, ohne es zu
-veröffentlichen.
+Das Handbuch entsteht hier im Repo und wird nach Outline veröffentlicht, wie die Handbücher von bashclub-zsync und
+trmm-web-relay:
+- öffentlich, ohne Login: https://docs.bashclub.org/s/checkmk-opnsense-agent
+- mit Login (für Autoren): https://docs.bashclub.org/collection/opnsense-agent-for-checkmk-uN5D2q804g
+
+Jeder Push auf `main` veröffentlicht die geänderten Seiten (`.forgejo/workflows/handbuch.yml`, `ci.sh`,
+`render.py publish`, Secret `OUTLINE_API_KEY`). Weil `main` nur Releases bekommt, zeigt Outline immer den Stand des
+aktuellen Releases; `testing` ändert das Handbuch, ohne es zu veröffentlichen. `tests/handbuch.sh` prüft das Handbuch
+in jeder CI: jede Option und jeder Check steht in der Referenz, jeder Artikel lässt sich aufbereiten.
 
 **Git ist die Quelle.** Änderungen direkt in Outline werden beim nächsten Veröffentlichen überschrieben.
 
@@ -52,3 +55,15 @@ Geändertes Verhalten steht in einer Hinweisbox mit altem und neuem Verhalten:
   ([Services](02-referenz/02-services.md), [Konfiguration](02-referenz/01-konfiguration.md)) im selben Commit.
 - Ein behobener Fehler aus [Bekannte Probleme](03-fehlerbehebung/02-bekannte-probleme.md) wird dort entfernt und,
   wenn sich der Betrieb ändert, mit Versionsvermerk beschrieben.
+
+## Veröffentlichen
+`render.py publish` legt Artikel ohne `outline_id` selbst an (gesucht wird zuerst über den Titel unter ihrem
+Bereich), bringt alle Seiten in die Reihenfolge des Handbuchs und aktualisiert die geänderten. `outline` und
+`outline_id` im Kopf sind danach optional, machen aber Umbenennungen sicher: Ohne ID legt ein neuer Titel eine neue
+Seite an, die alte bleibt stehen. Von Hand:
+```sh
+docs/handbuch/render.py list
+docs/handbuch/render.py render docs/handbuch/01-einrichtung/01-installation.md --allow-missing
+docs/handbuch/render.py publish --dry-run
+```
+Alle Seiten neu veröffentlichen: Workflow `handbuch` von Hand starten (workflow_dispatch).

@@ -36,9 +36,10 @@ Without internet access it stays OK. To switch it off, add `agentupdate` to `ski
 
 ## Documentation
 
-The handbook (German, English to follow) is in [docs/handbuch](docs/handbuch/_collection.md): installation,
-connecting to Checkmk (`onlyfrom`, encryption), all options and services, troubleshooting and known issues. It will
-be published on docs.bashclub.org with a release. Planned features: [ROADMAP.md](ROADMAP.md).
+The handbook (German, English to follow): https://docs.bashclub.org/s/checkmk-opnsense-agent – installation,
+connecting to Checkmk (`onlyfrom`, encryption), all options and services, troubleshooting. The source is
+[docs/handbuch](docs/handbuch/_collection.md). Changes: [CHANGELOG.md](CHANGELOG.md), planned features:
+[ROADMAP.md](ROADMAP.md).
 
 ## Tests
 

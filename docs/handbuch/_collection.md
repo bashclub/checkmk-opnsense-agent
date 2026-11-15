@@ -1,7 +1,8 @@
 ---
-title: checkmk-opnsense-agent
+title: OPNsense Agent for CheckMK
 audience: Anwender, Admin
-outline:
+outline: https://docs.bashclub.org/collection/opnsense-agent-for-checkmk-uN5D2q804g
+outline_id: 529443e5-29b5-4ce2-aa62-6ab7125ababa
 ---
 **checkmk-opnsense-agent** ist ein Checkmk-Agent für OPNsense. Er besteht aus einer einzigen Python-Datei, läuft mit
 dem Python der OPNsense und braucht kein Paket. Er liefert die üblichen Daten eines Checkmk-Agents (CPU, Speicher,
