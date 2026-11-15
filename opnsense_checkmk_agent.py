@@ -24,7 +24,8 @@
 ##  default config file /usr/local/etc/checkmk.conf
 ##
 ## for server-side implementation of 
-##      * smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart
+##      * smart     - plugin os-smart (smartctl) and the Checkmk agent plugin smart_posix in /usr/local/check_mk_agent/plugins/
+##                    (with skipcheck: smartinfo), or for the section disk_smart_info the mkp from https://github.com/bashclub/checkmk-smart
 ##      * squid     - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active
 
 ##  task types2
@@ -3198,7 +3199,8 @@ if __name__ == "__main__":
         print("Questions under https://forum.opnsense.org/index.php?topic=26594.0\n")
         print("Server-side implementation for")
         print("-"*35)
-        print("\t* smartdisk - install the mkp from https://github.com/bashclub/checkmk-smart plugins os-smart")
+        print("\t* smart - plugin os-smart (smartctl) and the Checkmk agent plugin smart_posix in /usr/local/check_mk_agent/plugins/")
+        print("\t          (with skipcheck: smartinfo), or for the section disk_smart_info the mkp from https://github.com/bashclub/checkmk-smart")
         print("\t* squid - install the mkp from https://exchange.checkmk.com/p/squid and forwarder -> listen on loopback active\n")
         _parser.print_help()
         print("\n")

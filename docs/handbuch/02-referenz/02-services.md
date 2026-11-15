@@ -16,7 +16,7 @@ liefert keinen Service.
 ## Lokale Checks
 | `skipcheck` | Service | OK | WARN | CRIT |
 |---|---|---|---|---|
-| `firmware` | `Firmware` | aktuelle Version | Update verfügbar (auch Major-Upgrade) | – |
+| `firmware` | `Firmware` | aktuelle Version | Update verfügbar (auch Major-Upgrade und ab 1.2.18 Paket-Updates) | – |
 | `business` | `Business Licence` | Lizenz läuft länger als 60 Tage | unter 60 Tagen | unter 30 Tagen |
 | `agentupdate` | `Checkmk Agent Update` | Agent aktuell oder keine Prüfung möglich | neue Version ([Updates](../01-einrichtung/03-updates.md)) | – |
 | `services` | `Services` | alle Dienste der OPNsense laufen | – | ein Dienst läuft nicht |
@@ -34,9 +34,9 @@ liefert keinen Service.
 Zu einzelnen Services:
 - **Firmware** vergleicht die installierte Version mit der neuesten aus der Update-Prüfung der OPNsense
   (`/tmp/pkg_upgrade.json`, entsteht bei System › Firmware › Updates prüfen bzw. dem täglichen Cron-Job). Ab 1.2.17
-  stört ein fehlendes oder kaputtes Changelog (`/usr/local/opnsense/changelog/index.json`) nicht mehr. Reine
-  Paket-Updates ohne neue OPNsense-Version meldet der Service nicht
-  ([Bekannte Probleme](../03-fehlerbehebung/02-bekannte-probleme.md)).
+  stört ein fehlendes oder kaputtes Changelog (`/usr/local/opnsense/changelog/index.json`) nicht mehr. Ab 1.2.18
+  meldet er auch Updates von Plugins und Paketen ohne neue OPNsense-Version (WARN, Metrik `package_updates`, bis zu
+  10 Paketnamen im Text).
 - **Services** fragt die Dienste ab, die die OPNsense unter System › Diagnose › Dienste zeigt. Ab 1.2.18 dürfen
   Dienste, die in `skipservice` stehen, gestoppt sein, ohne dass der Service CRIT wird; der Text nennt sie
   (`stopped, ignored: …`). Angegeben wird der Name oder die Beschreibung aus der Dienste-Liste, Groß- und
@@ -92,10 +92,16 @@ verschwinden.
 | `dhcp` | `isc_dhcpd` | DHCP-Pools und aktive Leases; ab 1.2.18 auch von Kea DHCPv4 | ISC-DHCP oder Kea (in der OPNsense eingeschaltet); nicht Dnsmasq-DHCP |
 | `haproxy` | `haproxy` | Frontends, Backends, Server | Plugin `os-haproxy` |
 | `squid` | `squid` | Proxy-Statistik | Web-Proxy eingeschaltet und auf 127.0.0.1 erreichbar; [Squid-MKP](https://exchange.checkmk.com/p/squid) in Checkmk |
-| `smartinfo` | `disk_smart_info` | SMART-Werte der Festplatten | Plugin `os-smart`; [checkmk-smart-MKP](https://github.com/bashclub/checkmk-smart) in Checkmk |
+| `smartinfo` | `disk_smart_info` | SMART-Werte der Festplatten | Plugin `os-smart`; [checkmk-smart-MKP](https://github.com/bashclub/checkmk-smart) in Checkmk (Alternative siehe unten) |
 | `ipmi` | `ipmi` | IPMI-Sensoren | `ipmitool` installiert |
 | `apcupsd` | `apcaccess` | USV | Plugin `os-apcupsd` |
 | `taskdir` | – | Tasks ([Erweiterungen](03-erweiterungen.md#tasks)) | Task-Dateien |
+
+**SMART ohne MKP:** Nach Rückmeldung von Nutzern (#83) funktioniert das Standard-Plugin `smart_posix` aus Checkmk
+auf der OPNsense: Plugin `os-smart` installieren (bringt `smartctl`), `smart_posix` aus dem Checkmk-Server
+(Setup › Agents › Linux, Datei `smart_posix`) nach `/usr/local/check_mk_agent/plugins/` kopieren und ausführbar machen,
+den eigenen Abschnitt mit `skipcheck: smartinfo` abschalten und die Service-Erkennung ausführen. Auf der Test-VM ist
+das nicht geprüft (virtuelle Platten haben kein SMART).
 
 Dazu die Inventur (HW/SW-Inventory) und der Abschnitt `check_mk` mit Version, Hostname und `FailedPythonPlugins`
 ([Diagnose](../03-fehlerbehebung/01-diagnose.md)).

@@ -9,6 +9,5 @@ handbook (`docs/handbuch/03-fehlerbehebung/02-bekannte-probleme.md`).
 - **Dnsmasq DHCP:** pools and leases (default DHCP server of new OPNsense installations).
 - **Consider the CARP state:** no CRIT for tunnels on the backup node (GitHub #76; #48).
 - **Certificate monitoring:** expiry of all certificates in the trust store, not only OpenVPN and ACME (GitHub #66).
-- **Firmware:** report package and plugin updates without a new OPNsense version (GitHub #84).
 - **`onlyfrom` with networks (CIDR).**
-- **SMART:** test and document `smart_posix` from Checkmk as alternative to the checkmk-smart MKP (GitHub #83).
+- **SMART:** test `smart_posix` from Checkmk on real hardware (documented after user feedback, GitHub #83).
