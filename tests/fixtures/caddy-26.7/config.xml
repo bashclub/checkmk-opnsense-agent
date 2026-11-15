@@ -1,0 +1,45 @@
+<!-- Caddy part of config.xml on OPNsense 26.7.9 (test VM, os-caddy 2.2.3): a.internal -> 127.0.0.1:443 (web GUI),
+     b.internal -> 127.0.0.1:9 (nothing listens); certificates from Caddy's internal CA -->
+<OPNsense>
+  <caddy>
+    <general>
+      <enabled>1</enabled>
+      <HttpPort>8080</HttpPort>
+      <HttpsPort>8443</HttpsPort>
+    </general>
+    <reverseproxy>
+      <reverse uuid="caddy000-0000-4000-8000-000000000001">
+        <enabled>1</enabled>
+        <FromDomain>a.internal</FromDomain>
+        <description>test a.internal</description>
+      </reverse>
+      <reverse uuid="caddy000-0000-4000-8000-000000000002">
+        <enabled>1</enabled>
+        <FromDomain>b.internal</FromDomain>
+        <description>test b.internal</description>
+      </reverse>
+      <handle uuid="caddy000-0000-4000-8000-0000000000a1">
+        <enabled>1</enabled>
+        <reverse>caddy000-0000-4000-8000-000000000001</reverse>
+        <HandleType>handle</HandleType>
+        <HandleDirective>reverse_proxy</HandleDirective>
+        <ToDomain>127.0.0.1</ToDomain>
+        <ToPort>443</ToPort>
+        <HttpTls>1</HttpTls>
+        <HttpTlsInsecureSkipVerify>1</HttpTlsInsecureSkipVerify>
+        <description>to 443</description>
+      </handle>
+      <handle uuid="caddy000-0000-4000-8000-0000000000a2">
+        <enabled>1</enabled>
+        <reverse>caddy000-0000-4000-8000-000000000002</reverse>
+        <HandleType>handle</HandleType>
+        <HandleDirective>reverse_proxy</HandleDirective>
+        <ToDomain>127.0.0.1</ToDomain>
+        <ToPort>9</ToPort>
+        <HttpTls>0</HttpTls>
+        <HttpTlsInsecureSkipVerify>0</HttpTlsInsecureSkipVerify>
+        <description>to 9</description>
+      </handle>
+    </reverseproxy>
+  </caddy>
+</OPNsense>

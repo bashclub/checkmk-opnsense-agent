@@ -1889,6 +1889,95 @@ class checkmk_checker(object):
                 _ret.append(f'P "{_name}" expiredays={_days};{self.CERT_WARN_DAYS}:;{self.CERT_CRIT_DAYS}: CN {_cn}, issuer {self.get_common_name(_x509.issuer)}, {_when}')
         return _ret
 
+    CADDY_CERTDIR = "/var/db/caddy/data/caddy/certificates"
+
+    @staticmethod
+    def _tcp_reachable(host,port,timeout=2):
+        try:
+            socket.create_connection((host,int(port)),timeout=timeout).close()
+            return True
+        except (OSError,ValueError):
+            return False
+
+    def _caddy_certificate(self,domain):
+        ## newest certificate Caddy manages for the domain (any issuer: acme, zerossl, local); None if there is none
+        _name = domain.replace("*","wildcard_")
+        _best = None
+        for _file in glob.glob(os.path.join(self.CADDY_CERTDIR,"*",_name,f"{_name}.crt")):
+            try:
+                with open(_file,"r") as _f:
+                    _x509 = x509.load_pem_x509_certificate(_f.read().encode(),crypto_default_backend())
+            except (OSError,ValueError):
+                continue
+            if not _best or _x509.not_valid_after_utc > _best.not_valid_after_utc:
+                _best = _x509
+        return _best
+
+    def checklocal_caddy(self):
+        ## one service per domain of the reverse proxy (plugin os-caddy): upstreams reachable, certificate renewed
+        _caddy = ((self._config_reader().get("OPNsense") or {}).get("caddy")) or {}
+        if (_caddy.get("general") or {}).get("enabled") != "1":
+            return []
+        _proxy = _caddy.get("reverseproxy") or {}
+        _handles = [_h for _h in self._as_list(_proxy.get("handle")) if _h.get("enabled") == "1"]
+        _subdomains = dict((_s.get("@uuid"),_s.get("reverse")) for _s in self._as_list(_proxy.get("subdomain")))
+        _ret = []
+        _now = time.time()
+        for _domain in self._as_list(_proxy.get("reverse")):
+            if _domain.get("enabled") != "1" or not _domain.get("FromDomain"):
+                continue
+            _uuid = _domain.get("@uuid")
+            _name = _domain.get("FromDomain").strip()
+            _status = 0
+            _texts = []
+            ## upstreams of the handles of the domain and its subdomains
+            _upstreams = []
+            for _handle in _handles:
+                if _handle.get("reverse") != _uuid and _subdomains.get(_handle.get("subdomain")) != _uuid:
+                    continue
+                if _handle.get("HandleDirective","reverse_proxy") != "reverse_proxy":
+                    continue
+                _port = _handle.get("ToPort") or ("443" if _handle.get("HttpTls") == "1" else "80")
+                for _host in (_handle.get("ToDomain") or "").replace(" ",",").split(","):
+                    if _host:
+                        _upstreams.append(f"{_host}:{_port}" if ":" not in _host else f"[{_host}]:{_port}")
+            _down = [_up for _up in _upstreams if not self._tcp_reachable(_up.rsplit(":",1)[0].strip("[]"),_up.rsplit(":",1)[1])]
+            if _upstreams:
+                if len(_down) == len(_upstreams):
+                    _status = 2
+                elif _down:
+                    _status = 1
+                _texts.append("upstreams {0}/{1} reachable{2}".format(len(_upstreams) - len(_down),len(_upstreams),
+                              ", down: " + ", ".join(_down) if _down else ""))
+            ## certificate: Caddy renews when a third of the lifetime is left (Let's Encrypt 90 days, internal CA 12 hours)
+            _expiredays = ""
+            if _domain.get("CustomCertificate"):
+                _texts.append("custom certificate (service Certificate)")
+            elif _domain.get("DisableTls") == "1" or _name.startswith(("http://",":")):
+                pass
+            else:
+                _cert = self._caddy_certificate(_name)
+                if not _cert:
+                    _status = max(_status,1)
+                    _texts.append("no certificate yet")
+                else:
+                    _start, _end = _cert.not_valid_before_utc.timestamp(), _cert.not_valid_after_utc.timestamp()
+                    _left = _end - _now
+                    _lifetime = max(_end - _start,1)
+                    _expiredays = "|expiredays={0:.1f}".format(_left / 86400)
+                    _when = time.strftime("%d.%m.%Y %H:%M",time.localtime(_end))
+                    if _left < _lifetime / 12:
+                        _status = 2
+                        _texts.append(f"certificate {'expired' if _left < 0 else 'expires'} {_when}, renewal failed")
+                    elif _left < _lifetime / 6:
+                        _status = max(_status,1)
+                        _texts.append(f"certificate expires {_when}, renewal overdue")
+                    else:
+                        _texts.append(f"certificate valid until {_when} ({self.get_common_name(_cert.issuer)})")
+            _ret.append('{0} "Caddy Domain: {1}" upstreams_up={2}|upstreams={3}{4} {5}'.format(
+                _status,_name,len(_upstreams) - len(_down),len(_upstreams),_expiredays,", ".join(_texts) or "OK"))
+        return _ret
+
     def checklocal_acmeclient(self):
         _ret = []
         _now = time.time()

@@ -30,6 +30,7 @@ liefert keinen Service.
 | `unbound` | `Unbound DNS` | läuft, mit Anfragen und Cache-Treffern | – | läuft nicht |
 | `certificates` | `Certificate: <Name>`, `CA: <Name>` | ab 1.2.18: läuft noch 30 Tage oder länger | unter 30 Tagen | unter 14 Tagen oder abgelaufen |
 | `acmeclient` | `ACME Cert: <Name>` | Zertifikat erneuert | ausstehend | Fehler, Ablauf in unter 10 Tagen |
+| `caddy` | `Caddy Domain: <Domain>` | ab 1.2.18: Upstreams erreichbar, Zertifikat erneuert | ein Teil der Upstreams nicht erreichbar; Zertifikat überfällig oder noch keins | kein Upstream erreichbar; Zertifikat (fast) abgelaufen |
 | `nginx` | `Nginx Uptime`, `Nginx Location: <Name>` | läuft, Upstreams erreichbar | Upstream teilweise erreichbar, keine Daten | nginx läuft nicht, Upstream down |
 
 Zu einzelnen Services:
@@ -80,6 +81,12 @@ Zu einzelnen Services:
 - **Geändert in 1.2.18 (OpenVPN):** Bis 1.2.17 fehlten Instanzen ganz oder der Check scheiterte (mehrere
   Instanzen, Client-Instanzen, ein einzelner Legacy-Server). Ab 1.2.18 erscheinen alle; nach dem Update in Checkmk
   die Service-Erkennung ausführen. Ein Server, dessen Prozess nicht läuft, ist CRIT mit „Server down“.
+- **Caddy** ab 1.2.18 (Plugin `os-caddy`, eingeschaltet): ein Service je Domain des Reverse Proxy. Der Agent prüft
+  selbst per TCP-Verbindung, ob die Ziele der Handles (auch der Subdomains) erreichbar sind, und liest das
+  Zertifikat, das Caddy für die Domain verwaltet (`/var/db/caddy/data/caddy/certificates`). Caddy erneuert bei einem
+  Drittel Restlaufzeit; bleibt weniger als ein Sechstel, ist der Service WARN, unter einem Zwölftel CRIT. Das passt für
+  Let's Encrypt (90 Tage) wie für die interne CA von Caddy (12 Stunden). Domains mit eigenem Zertifikat überwacht
+  `Certificate`. Metriken: erreichbare und alle Upstreams, `expiredays`.
 - **WireGuard** ab 1.2.18: Peers ohne Endpoint-Adresse (Roadwarrior: Handy, Laptop) sind nur verbunden, solange sie
   genutzt werden; getrennt bleiben sie OK. Deaktivierte Peers und Peers nur an deaktivierten Instanzen erscheinen
   nicht. Der Text beginnt mit `online` oder `offline`.

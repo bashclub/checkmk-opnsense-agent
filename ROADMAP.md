@@ -5,5 +5,4 @@ https://code.bashclub.org/bashclub/checkmk-opnsense-agent/issues; known bugs wit
 handbook (`docs/handbuch/03-fehlerbehebung/02-bekannte-probleme.md`).
 
 ## Feature requests
-- **Caddy** (plugin `os-caddy`): service running, reverse proxy domains/handlers, certificates.
-- **SMART:** test `smart_posix` from Checkmk on real hardware (documented after user feedback, GitHub #83).
+None open at the moment. New requests go to the issues on code.bashclub.org.
