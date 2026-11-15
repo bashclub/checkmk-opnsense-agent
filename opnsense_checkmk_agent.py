@@ -33,7 +33,7 @@
 ##
 
 
-__VERSION__ = "1.2.18"
+__VERSION__ = "1.2.19"
 
 import sys
 import os
@@ -199,8 +199,13 @@ def read_config(path):
             continue
         _match = re.match(r"^\s*(\w+):\s*(.*?)(?:\s+#|$)",_line)
         if not _match:
-            log(f"{path} line {_number} ignored, expected 'name: value': {_line.strip()}","warning")
-            continue
+            ## "skipservice ntpd": a known option without colon is accepted (issue #2)
+            _match = re.match(r"^\s*(\w+)\s+(\S.*?)(?:\s+#|$)",_line)
+            if _match and _match.group(1).lower() in CONFIG_OPTIONS:
+                log(f"{path} line {_number}: colon missing, read as '{_match.group(1)}: {_match.group(2)}'","warning")
+            else:
+                log(f"{path} line {_number} ignored, expected 'name: value': {_line.strip()}","warning")
+                continue
         _key = _match.group(1).lower()
         if _key not in CONFIG_OPTIONS:
             log(f"{path} line {_number}: unknown option '{_match.group(1)}'","warning")

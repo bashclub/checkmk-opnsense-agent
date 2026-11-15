@@ -6,6 +6,9 @@ Development moved to https://code.bashclub.org/bashclub/checkmk-opnsense-agent w
 After an update, run a service discovery in Checkmk: several checks report new services or no longer report
 services that were wrong before.
 
+## 1.2.19 – testing
+- Config file: a known option without colon (`skipservice ntpd`) is read, with a note in the system log (#2).
+
 ## 1.2.18 – 2026-11-15
 
 ### New

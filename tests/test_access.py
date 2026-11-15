@@ -103,12 +103,13 @@ class TestConfigFile(unittest.TestCase):
     def test_read_config(self):
         """feedback Marc Risse: "skipservice ntpd" (without colon) was ignored silently."""
         agent = load_agent()
-        self.write("# comment\nskipservice ntpd\nSkipCheck: ipmi  # no ipmi\nfoo: bar\nonlyfrom: 192.0.2.10\n", 1000)
+        self.write("# comment\nskipservice ntpd\nSkipCheck: ipmi  # no ipmi\nfoo: bar\nonlyfrom: 192.0.2.10\nbroken line\n", 1000)
         with mock.patch.object(agent, "log") as log:
             options = agent.read_config(self.path)
-        self.assertEqual(options, {"skipcheck": "ipmi", "onlyfrom": "192.0.2.10"})
+        self.assertEqual(options, {"skipservice": "ntpd", "skipcheck": "ipmi", "onlyfrom": "192.0.2.10"})
         messages = [call.args[0] for call in log.call_args_list]
-        self.assertIn(f"{self.path} line 2 ignored, expected 'name: value': skipservice ntpd", messages)
+        self.assertIn(f"{self.path} line 2: colon missing, read as 'skipservice: ntpd'", messages)
+        self.assertIn(f"{self.path} line 6 ignored, expected 'name: value': broken line", messages)
         self.assertIn(f"{self.path} line 4: unknown option 'foo'", messages)
 
     def test_running_daemon_applies_changes(self):

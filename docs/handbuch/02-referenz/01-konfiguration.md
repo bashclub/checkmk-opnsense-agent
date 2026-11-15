@@ -6,8 +6,9 @@ outline:
 ## Konfigurationsdatei
 `/usr/local/etc/checkmk.conf`, eine Option je Zeile, `name: wert`. Zeilen mit `#` am Anfang sind Kommentare, ebenso
 der Rest einer Zeile ab ` #` (Leerzeichen und `#`; deshalb gehört diese Folge nicht in ein Passwort). Die Datei ist
-optional. Bei mehrfach genannten Optionen gilt die letzte Zeile. Zeilen ohne `name: wert` (z. B. ohne Doppelpunkt)
-und unbekannte Optionen ignoriert der Agent mit einer Warnung im Systemlog.
+optional. Bei mehrfach genannten Optionen gilt die letzte Zeile. Unbekannte Optionen und Zeilen, die er nicht lesen kann,
+ignoriert der Agent mit einer Warnung im Systemlog; ab 1.2.19 liest er eine bekannte Option ohne Doppelpunkt
+(`skipservice ntpd`) trotzdem, ebenfalls mit Hinweis im Log.
 
 Ab 1.2.18 übernimmt der laufende Dienst Änderungen an `onlyfrom`, `encrypt`, `skipcheck`, `skipservice`,
 `skipcert`, `netbird_idle` und `tenants` bei der nächsten Abfrage, ohne Neustart (Systemlog: `options reloaded`). `port`, `expire_inventory` und
