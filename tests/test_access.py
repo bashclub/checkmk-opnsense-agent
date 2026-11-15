@@ -51,10 +51,19 @@ class TestOnlyFrom(unittest.TestCase):
     def test_invalid_entries_are_ignored_and_logged(self):
         self.assertTrue(self.allowed("::ffff:192.0.2.10", onlyfrom="checkmk.example.org,192.0.2.10"))
         self.assertFalse(self.allowed("::ffff:192.0.2.99", onlyfrom="checkmk.example.org,192.0.2.10"))
-        self.assertIn("onlyfrom: ignoring 'checkmk.example.org', only IPv4 and IPv6 addresses are allowed", self.log)
+        self.assertIn("onlyfrom: ignoring 'checkmk.example.org', only IPv4/IPv6 addresses and networks are allowed", self.log)
 
-    def test_networks_are_not_supported(self):
-        self.assertFalse(self.allowed("::ffff:192.0.2.10", onlyfrom="192.0.2.0/24"))
+    def test_networks(self):
+        """onlyfrom with networks (CIDR), IPv4 and IPv6."""
+        self.assertTrue(self.allowed("::ffff:192.0.2.10", onlyfrom="192.0.2.0/24"))
+        self.assertTrue(self.allowed("::ffff:192.0.2.10", onlyfrom="192.0.2.17/24"))  # host bits are ignored
+        self.assertFalse(self.allowed("::ffff:192.0.3.10", onlyfrom="192.0.2.0/24"))
+        self.assertTrue(self.allowed("2001:db8:1::5", onlyfrom="198.51.100.1,2001:db8:1::/48"))
+        self.assertFalse(self.allowed("2001:db8:2::5", onlyfrom="2001:db8:1::/48"))
+
+    def test_invalid_network_is_ignored(self):
+        self.assertFalse(self.allowed("::ffff:192.0.2.10", onlyfrom="192.0.2.0/33"))
+        self.assertIn("onlyfrom: ignoring '192.0.2.0/33', only IPv4/IPv6 addresses and networks are allowed", self.log)
 
     def test_without_valid_address_nobody(self):
         """fail closed: "onlyfrom:" set but empty, only commas or only invalid entries rejects everybody."""

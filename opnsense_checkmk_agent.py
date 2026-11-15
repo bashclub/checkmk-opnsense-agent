@@ -208,18 +208,40 @@ def read_config(path):
         _ret[_key] = _match.group(2)
     return _ret
 
-def parse_ip_list(value,option):
-    ## comma separated addresses, invalid entries are logged and ignored
+def parse_ip_list(value,option,networks=False):
+    ## comma separated addresses (with networks=True also networks like 192.0.2.0/24), normalized;
+    ## invalid entries are logged and ignored
     _ret = []
     for _entry in str(value).split(","):
         if not _entry.strip():
             continue
         _ip = client_ip(_entry)
+        if not _ip and networks and "/" in _entry:
+            try:
+                _ip = str(ipaddress.ip_network(_entry.strip(),strict=False))
+            except ValueError:
+                _ip = None
         if _ip:
             _ret.append(_ip)
         else:
-            log(f"{option}: ignoring '{_entry.strip()}', only IPv4 and IPv6 addresses are allowed","warning")
+            _allowed = "IPv4/IPv6 addresses and networks" if networks else "IPv4 and IPv6 addresses"
+            log(f"{option}: ignoring '{_entry.strip()}', only {_allowed} are allowed","warning")
     return _ret
+
+def ip_allowed(address,allowed):
+    ## address (normalized) is one of the addresses or in one of the networks
+    if not address:
+        return False
+    for _entry in allowed:
+        if "/" in _entry:
+            try:
+                if ipaddress.ip_address(address) in ipaddress.ip_network(_entry):
+                    return True
+            except ValueError:
+                continue
+        elif _entry == address:
+            return True
+    return False
 
 def check_pid(pid):
     try:
@@ -2228,7 +2250,7 @@ class checkmk_server(TCPServer,checkmk_checker):
 
     def _apply_options(self,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,tenants=None):
         ## onlyfrom set: only these addresses, without a valid address nobody (fail closed)
-        self.onlyfrom = parse_ip_list(onlyfrom,"onlyfrom") if onlyfrom is not None else None
+        self.onlyfrom = parse_ip_list(onlyfrom,"onlyfrom",networks=True) if onlyfrom is not None else None
         if self.onlyfrom == []:
             log("onlyfrom contains no valid address, all connections are rejected","warning")
         self.encrypt = encrypt or None
@@ -2271,7 +2293,7 @@ class checkmk_server(TCPServer,checkmk_checker):
     def verify_request(self, request, client_address):
         self._reload_config()
         _client = client_ip(client_address[0])
-        if self.onlyfrom is not None and _client not in self.onlyfrom and _client not in self.tenants.keys():
+        if self.onlyfrom is not None and not ip_allowed(_client,self.onlyfrom) and _client not in self.tenants.keys():
             log(f"Client {_client} not allowed","warn")
             return False
         return True

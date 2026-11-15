@@ -24,7 +24,7 @@ skipservice: ntopng,haproxy
 | Option | Standard | Bedeutung |
 |---|---|---|
 | `port` | `6556` | TCP-Port des Agents |
-| `onlyfrom` | alle | nur diese IPv4-/IPv6-Adressen bekommen Daten, durch Komma getrennt; ohne gültige Adresse niemand ([An Checkmk anbinden](../01-einrichtung/02-checkmk-anbinden.md#zugriff-beschränken-onlyfrom)) |
+| `onlyfrom` | alle | nur diese IPv4-/IPv6-Adressen und ab 1.2.18 Netze (`192.0.2.0/28`) bekommen Daten, durch Komma getrennt; ohne gültigen Eintrag niemand ([An Checkmk anbinden](../01-einrichtung/02-checkmk-anbinden.md#zugriff-beschränken-onlyfrom)) |
 | `encrypt` | aus | Passwort für die verschlüsselte Ausgabe ([An Checkmk anbinden](../01-einrichtung/02-checkmk-anbinden.md#verschlüsselung)) |
 | `skipcheck` | keine | Checks, die nicht laufen, durch Komma getrennt; die Namen stehen in [Services und Zustände](02-services.md) |
 | `skipservice` | keine | ab 1.2.18: OPNsense-Dienste (Name oder Beschreibung), die gestoppt sein dürfen, durch Komma getrennt ([Services und Zustände](02-services.md)) |

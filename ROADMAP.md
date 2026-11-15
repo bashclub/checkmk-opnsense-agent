@@ -8,5 +8,4 @@ handbook (`docs/handbuch/03-fehlerbehebung/02-bekannte-probleme.md`).
 - **Caddy** (plugin `os-caddy`): service running, reverse proxy domains/handlers, certificates.
 - **Dnsmasq DHCP:** pools and leases (default DHCP server of new OPNsense installations).
 - **Certificate monitoring:** expiry of all certificates in the trust store, not only OpenVPN and ACME (GitHub #66).
-- **`onlyfrom` with networks (CIDR).**
 - **SMART:** test `smart_posix` from Checkmk on real hardware (documented after user feedback, GitHub #83).
