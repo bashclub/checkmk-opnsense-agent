@@ -46,6 +46,14 @@ Auf LAN erlaubt die Standardregel den Zugriff schon. Der Agent selbst antwortet 
 auch im Agent beschränken will, setzt `onlyfrom` (siehe [An Checkmk anbinden](02-checkmk-anbinden.md)). Port 6556
 auf WAN nicht öffnen.
 
+## Automatisch aktualisieren
+Empfohlen ab 1.2.20: ein Cronjob, der jede Nacht um 3:00 auf das neueste Release aktualisiert:
+```sh
+/usr/local/etc/rc.syshook.d/start/99-checkmk_agent --install-cron
+```
+Er erscheint unter System › Einstellungen › Cron. Zeitplan, Testing-Version und Entfernen:
+[Updates: Release und Testing](03-updates.md#automatisch-aktualisieren).
+
 ## Testen
 Auf der OPNsense selbst, ohne Netzwerk:
 ```sh

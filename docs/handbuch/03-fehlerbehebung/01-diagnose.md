@@ -45,6 +45,22 @@ Das Systemlog des Agents:
 grep checkmk_agent /var/log/system/latest.log | tail -20
 ```
 
+## Das automatische Update läuft nicht
+`Checkmk Agent Update` bleibt WARN, obwohl ein Cronjob eingerichtet ist:
+1. Gibt es den Job? System › Einstellungen › Cron, Befehl „Checkmk agent update“, eingeschaltet.
+2. Was hat er getan? Jeder Lauf schreibt ins Systemlog:
+   ```sh
+   grep "checkmk_agent.*update:" /var/log/system/latest.log | tail -5
+   ```
+   `no downgrade` bzw. `has the same version, nothing to do`: Die installierte Version ist schon die neueste (z. B. Testing
+   installiert, Job holt das Release). `not reachable` / `Error 403`: kein Zugang zu code.bashclub.org.
+   `does not compile`: Die Datei auf dem Server war defekt, der Agent blieb unverändert.
+3. Von Hand auslösen, wie der Cronjob es tut:
+   ```sh
+   configctl checkmkagent update main
+   ```
+4. Fehlt die Aktion („Action not found“), den Job neu anlegen: `--install-cron`.
+
 ## Ein Service fehlt oder stimmt nicht
 1. Liefert der Agent ihn? `--debug | grep "Name des Service"`.
 2. Steht der Check in `skipcheck`? `--help` zeigt die aktive Konfiguration.
