@@ -1296,77 +1296,86 @@ class checkmk_checker(object):
                 _ret.append('{status} "OpenVPN Client: {description}" connectiontime=0|connections_ssl_vpn=0|if_in_octets=0|if_out_octets=0|expiredays={expiredays} Nicht verbunden {expiredate}'.format(**_client))
         return _ret
 
-    def checklocal_ipsec(self):
-        _ret =[]
-        _ipsec_config = self._config_reader().get("ipsec")
-        if type(_ipsec_config) != dict:
-            return []
-        if _ipsec_config.get("enable") != "1":
-            return []
-        _phase1config = _ipsec_config.get("phase1")
-        _phase2config = _ipsec_config.get("phase2")
-        if type(_phase1config) != list:
-            _phase1config = [_phase1config]
-        if type(_phase2config) != list:
-            _phase2config = [_phase2config]
-        _json_data = self._run_prog("/usr/local/opnsense/scripts/ipsec/list_status.py")
-        if len(_json_data.strip()) > 20:
-            _json_data = json.loads(_json_data)
-        else:
-            _json_data = {}
-        for _phase1 in _phase1config:
-            if _phase1 == None:
+    @staticmethod
+    def _as_list(value):
+        if type(value) == list:
+            return [_entry for _entry in value if type(_entry) == dict]
+        return [value] if type(value) == dict else []
+
+    @staticmethod
+    def _ipsec_tunnel(name,condata,children=None):
+        ## local check of one IKE connection from list_status.py (vici list-conns/list-sas)
+        ## children: {child name: description} of a swanctl connection, all must be up; None (legacy): at least one
+        _con = {
+            "status"            : 2,
+            "bytes-received"    : 0,
+            "bytes-sent"        : 0,
+            "life-time"         : 0,
+            "state"             : "unknown",
+            "remote-host"       : "unknown",
+            "remote-name"       : name,
+            "local-id"          : condata.get("local-id"),
+            "remote-id"         : condata.get("remote-id")
+        }
+        _children_up = set()
+        for _sas in condata.get("sas",[]):
+            _con["state"] = _sas.get("state")
+            _con["local-id"] = _sas.get("local-id")
+            _con["remote-id"] = _sas.get("remote-id")
+            if _sas.get("state") != "ESTABLISHED":
                 continue
-            _ikeid = _phase1.get("ikeid")
-            _name = _phase1.get("descr")
-            if len(_name.strip()) < 1:
-                _name = _phase1.get("remote-gateway")
-            _condata = _json_data.get(f"con{_ikeid}",{})
-            _con = {
-                "status"            : 2,
-                "bytes-received"    : 0,
-                "bytes-sent"        : 0,
-                "life-time"         : 0,
-                "state"             : "unknown",
-                "remote-host"       : "unknown",
-                "remote-name"       : _name,
-                "local-id"          : _condata.get("local-id"),
-                "remote-id"         : _condata.get("remote-id")
-            }
-            _phase2_up = 0
-            for _sas in _condata.get("sas",[]):
-                _con["state"] = _sas.get("state")
-                _con["local-id"] = _sas.get("local-id")
-                _con["remote-id"] = _sas.get("remote-id")
-
-                if _sas.get("state") != "ESTABLISHED":
+            _con["remote-host"] = _sas.get("remote-host")
+            for _child in (_sas.get("child-sas") or {}).values():
+                if _child.get("state") != "INSTALLED":
                     continue
-                _con["remote-host"] = _sas.get("remote-host")
-                for _child in _sas.get("child-sas",{}).values():
-                    if _child.get("state") != "INSTALLED":
-                        continue
-                    _phase2_up += 1
-                    _install_time = max(1,int(_child.get("install-time","1")))
-                    _con["bytes-received"] += int(int(_child.get("bytes-in","0")) /_install_time)
-                    _con["bytes-sent"] += int(int(_child.get("bytes-out","0")) /_install_time)
-                    _con["life-time"] = max(_con["life-time"],_install_time)
-                    _con["status"] = 0 if _con["status"] != 1 else 1
-                    
-            #_required_phase2 = len(list(filter(lambda x: x.get("ikeid") == _ikeid,_phase2config)))
+                _children_up.add(_child.get("name"))
+                _install_time = max(1,int(_child.get("install-time","1")))
+                _con["bytes-received"] += int(int(_child.get("bytes-in","0")) /_install_time)
+                _con["bytes-sent"] += int(int(_child.get("bytes-out","0")) /_install_time)
+                _con["life-time"] = max(_con["life-time"],_install_time)
+        _missing = [_description for _name, _description in (children or {}).items() if _name not in _children_up]
+        if _children_up and not _missing:
+            _con["status"] = 0
+            return "{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {state} {local-id} - {remote-id}({remote-host})".format(**_con)
+        if _children_up:
+            _con["status"] = 1
+            _con["phase2"] = "{0}/{1} children up, down: {2}".format(len(children) - len(_missing),len(children),", ".join(_missing))
+            return "{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {phase2} {state} {local-id} - {remote-id}({remote-host})".format(**_con)
+        if condata.keys():
+            return "{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not connected ({state}) {local-id} - {remote-id}({remote-host})".format(**_con)
+        return "{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not running".format(**_con)
 
-            #if _phase2_up >= _required_phase2:
-            if _phase2_up > 0:
-                _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
-            elif _phase2_up == 0:
-                if _condata.keys():
-                    _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not connected {local-id} - {remote-id}({remote-host})".format(**_con))
-                else:
-                    _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets=0|if_out_octets=0|lifetime=0 not running".format(**_con))
-            else:
-                _con["status"] = max(_con["status"],1)
-                #_con["phase2"] = f"{_phase2_up}/{_required_phase2}"
-                _con["phase2"] = f"{_phase2_up}"
-                _ret.append("{status} \"IPsec Tunnel: {remote-name}\" if_in_octets={bytes-received}|if_out_octets={bytes-sent}|lifetime={life-time} {phase2} {state} {local-id} - {remote-id}({remote-host})".format(**_con))
+    def checklocal_ipsec(self):
+        ## legacy tunnels (phase 1/2) and connections (swanctl, OPNsense 23.1+; PRs #37, #69, #72)
+        _ret = []
+        _config = self._config_reader()
+        _ipsec_config = _config.get("ipsec") if type(_config.get("ipsec")) == dict else {}
+        _general = ((_config.get("OPNsense") or {}).get("IPsec") or {}).get("general") or {}
+        if _ipsec_config.get("enable") != "1" and _general.get("enabled") != "1":
+            return []
+        try:
+            _json_data = json.loads(self._run_prog("/usr/local/opnsense/scripts/ipsec/list_status.py"))
+        except ValueError: ## "ipsec not active" or nothing: strongswan is not running
+            _json_data = {}
+        if type(_json_data) != dict:
+            _json_data = {}
+
+        for _phase1 in self._as_list(_ipsec_config.get("phase1")):
+            if "disabled" in _phase1:
+                continue
+            _name = (_phase1.get("descr") or "").strip() or _phase1.get("remote-gateway") or "con{0}".format(_phase1.get("ikeid"))
+            _ret.append(self._ipsec_tunnel(_name,_json_data.get("con{0}".format(_phase1.get("ikeid")),{})))
+
+        _swanctl = (_config.get("OPNsense") or {}).get("Swanctl") or {}
+        _children = self._as_list((_swanctl.get("children") or {}).get("child"))
+        for _connection in self._as_list((_swanctl.get("Connections") or {}).get("Connection")):
+            if _connection.get("enabled") != "1":
+                continue
+            _uuid = _connection.get("@uuid","")
+            _name = (_connection.get("description") or "").strip() or _connection.get("remote_addrs") or _uuid
+            _required = dict((_child.get("@uuid"),(_child.get("description") or "").strip() or _child.get("@uuid"))
+                             for _child in _children if _child.get("connection") == _uuid and _child.get("enabled") == "1")
+            _ret.append(self._ipsec_tunnel(_name,_json_data.get(_uuid,{}),_required))
         return _ret
 
     def checklocal_wireguard(self):

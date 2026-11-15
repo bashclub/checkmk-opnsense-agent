@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from harness import FakeOPNsense, config_xml, local_lines
+from harness import FakeOPNsense, config_xml, fixture, local_lines
 
 NOW = 1_790_000_000
 
@@ -105,10 +105,82 @@ class TestIPsecLegacy(unittest.TestCase):
         self.assertEqual(len(lines), 1, lines)
         self.assertTrue(lines[0].startswith('0 "IPsec Tunnel: Branch"'), lines[0])
 
-    @unittest.expectedFailure  # #34: phase 1 without description crashes (None.strip())
     def test_tunnel_without_description(self):
+        """#34: a phase 1 without description stopped the check (None.strip())."""
         lines = self.run_check("")
         self.assertTrue(lines[0].startswith('0 "IPsec Tunnel: 192.0.2.50"'), lines)
+
+
+# real data from the test VM (OPNsense 26.7.9, strongSwan 6.1): tests/fixtures/ipsec-26.7
+LIST_STATUS = "/usr/local/opnsense/scripts/ipsec/list_status.py"
+LOOP_A, LOOP_B = "aaaaaaaa-0000-4000-8000-000000000001", "bbbbbbbb-0000-4000-8000-000000000002"
+
+
+def vm_status(with_children=False):
+    status = json.loads(fixture("ipsec-26.7", "status.json"))
+    if with_children:
+        for conn, child_sas in json.loads(fixture("ipsec-26.7", "children.json")).items():
+            if not conn.startswith("_"):
+                status[conn]["sas"][0]["child-sas"] = child_sas
+    return json.dumps(status)
+
+
+def vm_ipsec(status, config=None):
+    config = config_xml(config or fixture("ipsec-26.7", "config.xml"))
+    with FakeOPNsense(config, commands={LIST_STATUS: status}, now=NOW) as checker:
+        return checker.checklocal_ipsec()
+
+
+def by_name(lines):
+    return {l.split('"')[1]: l for l in lines}
+
+
+class TestIPsecRealVM(unittest.TestCase):
+    def test_established_without_children(self):
+        """IKE up, but no CHILD_SA: not connected (real VM state)."""
+        lines = by_name(vm_ipsec(vm_status()))
+        self.assertEqual(sorted(lines), ["IPsec Tunnel: 192.0.2.50", "IPsec Tunnel: Loop A", "IPsec Tunnel: Loop B",
+                                         "IPsec Tunnel: Nowhere"])
+        self.assertTrue(lines["IPsec Tunnel: Loop A"].startswith("2 "), lines)
+        self.assertIn("not connected (ESTABLISHED) a.loop - b.loop(127.0.0.1)", lines["IPsec Tunnel: Loop A"])
+        self.assertIn("not connected (CONNECTING)", lines["IPsec Tunnel: Nowhere"])
+        self.assertIn("not running", lines["IPsec Tunnel: 192.0.2.50"])  # legacy, not loaded
+
+    def test_children_up(self):
+        lines = by_name(vm_ipsec(vm_status(with_children=True)))
+        self.assertTrue(lines["IPsec Tunnel: Loop B"].startswith("0 "), lines)
+        self.assertIn("if_in_octets=2000|if_out_octets=1000|lifetime=600 ESTABLISHED b.loop - a.loop(10.91.0.185)",
+                      lines["IPsec Tunnel: Loop B"])
+        self.assertTrue(lines["IPsec Tunnel: Loop A"].startswith("1 "), lines)
+        self.assertIn("1/2 children up, down: Loop A unmatched", lines["IPsec Tunnel: Loop A"])
+        self.assertTrue(lines["IPsec Tunnel: Nowhere"].startswith("2 "), lines)
+
+    def test_disabled_child_is_not_required(self):
+        config = fixture("ipsec-26.7", "config.xml")
+        self.assertIn('<child uuid="dddddddd-0000-4000-8000-000000000002">\n        <enabled>1</enabled>', config)
+        config = config.replace('<child uuid="dddddddd-0000-4000-8000-000000000002">\n        <enabled>1</enabled>',
+                                '<child uuid="dddddddd-0000-4000-8000-000000000002">\n        <enabled>0</enabled>')
+        lines = by_name(vm_ipsec(vm_status(with_children=True), config))
+        self.assertTrue(lines["IPsec Tunnel: Loop A"].startswith("0 "), lines["IPsec Tunnel: Loop A"])
+
+    def test_strongswan_not_running(self):
+        lines = vm_ipsec("ipsec not active\n")
+        self.assertEqual(len(lines), 4, lines)
+        self.assertTrue(all(l.startswith("2 ") and l.endswith("not running") for l in lines), lines)
+
+    def test_disabled_connection_and_phase1_are_skipped(self):
+        """#39: disabled tunnels are not reported."""
+        config = fixture("ipsec-26.7", "config.xml")
+        config = config.replace(f'<Connection uuid="{LOOP_B}">\n        <enabled>1</enabled>',
+                                f'<Connection uuid="{LOOP_B}">\n        <enabled>0</enabled>')
+        config = config.replace("<ikeid>1</ikeid>\n    <iketype>", "<ikeid>1</ikeid>\n    <disabled>1</disabled>\n    <iketype>")
+        lines = by_name(vm_ipsec(vm_status(), config))
+        self.assertEqual(sorted(lines), ["IPsec Tunnel: Loop A", "IPsec Tunnel: Nowhere"])
+
+    def test_ipsec_disabled(self):
+        config = fixture("ipsec-26.7", "config.xml").replace("<enable>1</enable>", "<enable>0</enable>").replace(
+            "<enabled>1</enabled>\n      <preferred_oldsa>", "<enabled>0</enabled>\n      <preferred_oldsa>")
+        self.assertEqual(vm_ipsec(vm_status(), config), [])
 
 
 if __name__ == "__main__":

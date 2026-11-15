@@ -1,0 +1,212 @@
+<!-- IPsec part of config.xml on OPNsense 26.7.9 (test VM): legacy phase 1 without description (#34),
+     connections Loop A (2 children, one never matches) and Loop B to the firewall itself, Nowhere (unreachable) -->
+<ipsec>
+  <enable>1</enable>
+  <phase1>
+    <ikeid>1</ikeid>
+    <iketype>ikev2</iketype>
+    <interface>lan</interface>
+    <protocol>inet</protocol>
+    <remote-gateway>192.0.2.50</remote-gateway>
+    <myid_type>myaddress</myid_type>
+    <peerid_type>peeraddress</peerid_type>
+    <authentication_method>pre_shared_key</authentication_method>
+    <pre-shared-key>test-psk-only-on-the-test-vm</pre-shared-key>
+    <descr/>
+    <lifetime>28800</lifetime>
+    <encryption_algorithm>aes256</encryption_algorithm>
+    <hash_algorithm>sha256</hash_algorithm>
+    <dhgroup>14</dhgroup>
+  </phase1>
+  <phase2>
+    <ikeid>1</ikeid>
+    <uniqid>p2legacy1</uniqid>
+    <mode>tunnel</mode>
+    <protocol>esp</protocol>
+    <descr>legacy net</descr>
+    <lifetime>3600</lifetime>
+    <localid>
+      <type>lan</type>
+    </localid>
+    <remoteid>
+      <type>network</type>
+      <address>10.250.9.0</address>
+      <netbits>24</netbits>
+    </remoteid>
+  </phase2>
+</ipsec>
+<OPNsense>
+  <IPsec>
+    <general>
+      <enabled>1</enabled>
+      <preferred_oldsa>0</preferred_oldsa>
+      <disablevpnrules>0</disablevpnrules>
+      <passthrough_networks/>
+      <user_source/>
+      <local_group/>
+    </general>
+  </IPsec>
+  <Swanctl version="1.0.0" description="IPsec connections">
+    <Connections>
+      <Connection uuid="aaaaaaaa-0000-4000-8000-000000000001">
+        <enabled>1</enabled>
+        <proposals>default</proposals>
+        <unique>no</unique>
+        <aggressive>0</aggressive>
+        <version>2</version>
+        <mobike>1</mobike>
+        <local_addrs>10.91.0.185</local_addrs>
+        <remote_addrs>127.0.0.1</remote_addrs>
+        <encap>0</encap>
+        <send_certreq>1</send_certreq>
+        <keyingtries>0</keyingtries>
+        <description>Loop A</description>
+      </Connection>
+      <Connection uuid="bbbbbbbb-0000-4000-8000-000000000002">
+        <enabled>1</enabled>
+        <proposals>default</proposals>
+        <unique>no</unique>
+        <aggressive>0</aggressive>
+        <version>2</version>
+        <mobike>1</mobike>
+        <local_addrs>127.0.0.1</local_addrs>
+        <remote_addrs>10.91.0.185</remote_addrs>
+        <encap>0</encap>
+        <send_certreq>1</send_certreq>
+        <keyingtries>0</keyingtries>
+        <description>Loop B</description>
+      </Connection>
+      <Connection uuid="cccccccc-0000-4000-8000-000000000003">
+        <enabled>1</enabled>
+        <proposals>default</proposals>
+        <unique>no</unique>
+        <aggressive>0</aggressive>
+        <version>2</version>
+        <mobike>1</mobike>
+        <local_addrs>10.91.0.185</local_addrs>
+        <remote_addrs>192.0.2.99</remote_addrs>
+        <encap>0</encap>
+        <send_certreq>1</send_certreq>
+        <keyingtries>0</keyingtries>
+        <description>Nowhere</description>
+      </Connection>
+    </Connections>
+    <locals>
+      <local uuid="aaaaaaaa-0000-4000-8000-00000000000a">
+        <enabled>1</enabled>
+        <connection>aaaaaaaa-0000-4000-8000-000000000001</connection>
+        <round>0</round>
+        <auth>psk</auth>
+        <id>a.loop</id>
+        <description>Loop A</description>
+      </local>
+      <local uuid="bbbbbbbb-0000-4000-8000-00000000000a">
+        <enabled>1</enabled>
+        <connection>bbbbbbbb-0000-4000-8000-000000000002</connection>
+        <round>0</round>
+        <auth>psk</auth>
+        <id>b.loop</id>
+        <description>Loop B</description>
+      </local>
+      <local uuid="cccccccc-0000-4000-8000-00000000000a">
+        <enabled>1</enabled>
+        <connection>cccccccc-0000-4000-8000-000000000003</connection>
+        <round>0</round>
+        <auth>psk</auth>
+        <id>a.loop</id>
+        <description>Nowhere</description>
+      </local>
+    </locals>
+    <remotes>
+      <remote uuid="aaaaaaaa-0000-4000-8000-00000000000b">
+        <enabled>1</enabled>
+        <connection>aaaaaaaa-0000-4000-8000-000000000001</connection>
+        <round>0</round>
+        <auth>psk</auth>
+        <id>b.loop</id>
+        <description>Loop A</description>
+      </remote>
+      <remote uuid="bbbbbbbb-0000-4000-8000-00000000000b">
+        <enabled>1</enabled>
+        <connection>bbbbbbbb-0000-4000-8000-000000000002</connection>
+        <round>0</round>
+        <auth>psk</auth>
+        <id>a.loop</id>
+        <description>Loop B</description>
+      </remote>
+      <remote uuid="cccccccc-0000-4000-8000-00000000000b">
+        <enabled>1</enabled>
+        <connection>cccccccc-0000-4000-8000-000000000003</connection>
+        <round>0</round>
+        <auth>psk</auth>
+        <id>c.nowhere</id>
+        <description>Nowhere</description>
+      </remote>
+    </remotes>
+    <children>
+      <child uuid="dddddddd-0000-4000-8000-000000000001">
+        <enabled>1</enabled>
+        <connection>aaaaaaaa-0000-4000-8000-000000000001</connection>
+        <esp_proposals>default</esp_proposals>
+        <sha256_96>0</sha256_96>
+        <start_action>start</start_action>
+        <close_action>none</close_action>
+        <dpd_action>clear</dpd_action>
+        <mode>tunnel</mode>
+        <policies>1</policies>
+        <local_ts>10.250.1.0/24</local_ts>
+        <remote_ts>10.250.2.0/24</remote_ts>
+        <rekey_time>3600</rekey_time>
+        <description>Loop A net</description>
+      </child>
+      <child uuid="dddddddd-0000-4000-8000-000000000002">
+        <enabled>1</enabled>
+        <connection>aaaaaaaa-0000-4000-8000-000000000001</connection>
+        <esp_proposals>default</esp_proposals>
+        <sha256_96>0</sha256_96>
+        <start_action>start</start_action>
+        <close_action>none</close_action>
+        <dpd_action>clear</dpd_action>
+        <mode>tunnel</mode>
+        <policies>1</policies>
+        <local_ts>10.250.3.0/24</local_ts>
+        <remote_ts>10.250.4.0/24</remote_ts>
+        <rekey_time>3600</rekey_time>
+        <description>Loop A unmatched</description>
+      </child>
+      <child uuid="dddddddd-0000-4000-8000-000000000003">
+        <enabled>1</enabled>
+        <connection>bbbbbbbb-0000-4000-8000-000000000002</connection>
+        <esp_proposals>default</esp_proposals>
+        <sha256_96>0</sha256_96>
+        <start_action>none</start_action>
+        <close_action>none</close_action>
+        <dpd_action>clear</dpd_action>
+        <mode>tunnel</mode>
+        <policies>1</policies>
+        <local_ts>10.250.2.0/24</local_ts>
+        <remote_ts>10.250.1.0/24</remote_ts>
+        <rekey_time>3600</rekey_time>
+        <description>Loop B net</description>
+      </child>
+      <child uuid="dddddddd-0000-4000-8000-000000000004">
+        <enabled>1</enabled>
+        <connection>cccccccc-0000-4000-8000-000000000003</connection>
+        <esp_proposals>default</esp_proposals>
+        <sha256_96>0</sha256_96>
+        <start_action>start</start_action>
+        <close_action>none</close_action>
+        <dpd_action>clear</dpd_action>
+        <mode>tunnel</mode>
+        <policies>1</policies>
+        <local_ts>10.250.5.0/24</local_ts>
+        <remote_ts>10.250.6.0/24</remote_ts>
+        <rekey_time>3600</rekey_time>
+        <description>Nowhere net</description>
+      </child>
+    </children>
+    <Pools/>
+    <VTIs/>
+    <SPDs/>
+  </Swanctl>
+</OPNsense>

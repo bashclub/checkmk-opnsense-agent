@@ -6,10 +6,6 @@ outline:
 Offene Fehler und Einschränkungen, mit Umgehung, soweit es eine gibt. Behobene Fehler verschwinden von dieser Seite;
 was sich dadurch im Betrieb ändert, steht mit Versionsvermerk im jeweiligen Artikel.
 
-## IPsec
-- Nur das alte Tunnel-Modell (Phase 1/2). Verbindungen (VPN › IPsec › Verbindungen, swanctl) erscheinen nicht.
-- Eine Phase 1 ohne Beschreibung lässt den Check scheitern. Umgehung: allen Phase-1-Einträgen eine Beschreibung geben.
-
 ## Firmware
 - Updates nur für Pakete oder Plugins (ohne neue OPNsense-Version) meldet der Service `Firmware` nicht.
 

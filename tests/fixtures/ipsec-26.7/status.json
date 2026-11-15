@@ -1,0 +1,419 @@
+{
+ "aaaaaaaa-0000-4000-8000-000000000001": {
+  "local-addrs": "10.91.0.185",
+  "remote-addrs": "127.0.0.1",
+  "children": {
+   "dddddddd-0000-4000-8000-000000000001": {
+    "mode": "TUNNEL",
+    "rekey_time": "3600",
+    "rekey_bytes": "0",
+    "rekey_packets": "0",
+    "dpd_action": "none",
+    "close_action": "none",
+    "esp_proposals": {
+     "0": {
+      "encr": [
+       "AES_GCM_16_128",
+       "AES_GCM_16_192",
+       "AES_GCM_16_256"
+      ],
+      "ke": [
+       "ECP_256",
+       "ECP_384",
+       "ECP_521",
+       "ECP_256_BP",
+       "ECP_384_BP",
+       "ECP_512_BP",
+       "CURVE_25519",
+       "CURVE_448",
+       "MODP_3072",
+       "MODP_4096",
+       "MODP_6144",
+       "MODP_8192",
+       "MODP_2048",
+       "KE_NONE"
+      ],
+      "sn": [
+       "NO_EXT_SEQ"
+      ]
+     },
+     "1": {
+      "encr": [
+       "AES_CBC_128",
+       "AES_CBC_192",
+       "AES_CBC_256"
+      ],
+      "integ": [
+       "HMAC_SHA2_256_128",
+       "HMAC_SHA2_384_192",
+       "HMAC_SHA2_512_256",
+       "HMAC_SHA1_96",
+       "AES_XCBC_96"
+      ],
+      "ke": [
+       "ECP_256",
+       "ECP_384",
+       "ECP_521",
+       "ECP_256_BP",
+       "ECP_384_BP",
+       "ECP_512_BP",
+       "CURVE_25519",
+       "CURVE_448",
+       "MODP_3072",
+       "MODP_4096",
+       "MODP_6144",
+       "MODP_8192",
+       "MODP_2048",
+       "KE_NONE"
+      ],
+      "sn": [
+       "NO_EXT_SEQ"
+      ]
+     }
+    },
+    "ah_proposals": {},
+    "local-ts": [
+     "10.250.1.0/24"
+    ],
+    "remote-ts": [
+     "10.250.2.0/24"
+    ]
+   },
+   "dddddddd-0000-4000-8000-000000000002": {
+    "mode": "TUNNEL",
+    "rekey_time": "3600",
+    "rekey_bytes": "0",
+    "rekey_packets": "0",
+    "dpd_action": "none",
+    "close_action": "none",
+    "esp_proposals": {
+     "0": {
+      "encr": [
+       "AES_GCM_16_128",
+       "AES_GCM_16_192",
+       "AES_GCM_16_256"
+      ],
+      "ke": [
+       "ECP_256",
+       "ECP_384",
+       "ECP_521",
+       "ECP_256_BP",
+       "ECP_384_BP",
+       "ECP_512_BP",
+       "CURVE_25519",
+       "CURVE_448",
+       "MODP_3072",
+       "MODP_4096",
+       "MODP_6144",
+       "MODP_8192",
+       "MODP_2048",
+       "KE_NONE"
+      ],
+      "sn": [
+       "NO_EXT_SEQ"
+      ]
+     },
+     "1": {
+      "encr": [
+       "AES_CBC_128",
+       "AES_CBC_192",
+       "AES_CBC_256"
+      ],
+      "integ": [
+       "HMAC_SHA2_256_128",
+       "HMAC_SHA2_384_192",
+       "HMAC_SHA2_512_256",
+       "HMAC_SHA1_96",
+       "AES_XCBC_96"
+      ],
+      "ke": [
+       "ECP_256",
+       "ECP_384",
+       "ECP_521",
+       "ECP_256_BP",
+       "ECP_384_BP",
+       "ECP_512_BP",
+       "CURVE_25519",
+       "CURVE_448",
+       "MODP_3072",
+       "MODP_4096",
+       "MODP_6144",
+       "MODP_8192",
+       "MODP_2048",
+       "KE_NONE"
+      ],
+      "sn": [
+       "NO_EXT_SEQ"
+      ]
+     }
+    },
+    "ah_proposals": {},
+    "local-ts": [
+     "10.250.3.0/24"
+    ],
+    "remote-ts": [
+     "10.250.4.0/24"
+    ]
+   }
+  },
+  "local-id": "a.loop",
+  "remote-id": "b.loop",
+  "version": "IKEv2",
+  "sas": [
+   {
+    "uniqueid": "1",
+    "version": "2",
+    "state": "ESTABLISHED",
+    "local-host": "10.91.0.185",
+    "local-port": "4500",
+    "local-id": "a.loop",
+    "remote-host": "127.0.0.1",
+    "remote-port": "4500",
+    "remote-id": "b.loop",
+    "initiator": "yes",
+    "initiator-spi": "7f13f25f01b47d05",
+    "responder-spi": "d913fa2af90509a7",
+    "encr-alg": "AES_CBC",
+    "encr-keysize": "128",
+    "integ-alg": "HMAC_SHA2_256_128",
+    "prf-alg": "PRF_HMAC_SHA2_256",
+    "dh-group": "ECP_256",
+    "established": "38",
+    "rekey-time": "14029",
+    "child-sas": {}
+   }
+  ],
+  "routed": true,
+  "local-class": "pre-shared key",
+  "remote-class": "pre-shared key"
+ },
+ "bbbbbbbb-0000-4000-8000-000000000002": {
+  "local-addrs": "127.0.0.1",
+  "remote-addrs": "10.91.0.185",
+  "children": {
+   "dddddddd-0000-4000-8000-000000000003": {
+    "mode": "TUNNEL",
+    "rekey_time": "3600",
+    "rekey_bytes": "0",
+    "rekey_packets": "0",
+    "dpd_action": "none",
+    "close_action": "none",
+    "esp_proposals": {
+     "0": {
+      "encr": [
+       "AES_GCM_16_128",
+       "AES_GCM_16_192",
+       "AES_GCM_16_256"
+      ],
+      "ke": [
+       "ECP_256",
+       "ECP_384",
+       "ECP_521",
+       "ECP_256_BP",
+       "ECP_384_BP",
+       "ECP_512_BP",
+       "CURVE_25519",
+       "CURVE_448",
+       "MODP_3072",
+       "MODP_4096",
+       "MODP_6144",
+       "MODP_8192",
+       "MODP_2048",
+       "KE_NONE"
+      ],
+      "sn": [
+       "NO_EXT_SEQ"
+      ]
+     },
+     "1": {
+      "encr": [
+       "AES_CBC_128",
+       "AES_CBC_192",
+       "AES_CBC_256"
+      ],
+      "integ": [
+       "HMAC_SHA2_256_128",
+       "HMAC_SHA2_384_192",
+       "HMAC_SHA2_512_256",
+       "HMAC_SHA1_96",
+       "AES_XCBC_96"
+      ],
+      "ke": [
+       "ECP_256",
+       "ECP_384",
+       "ECP_521",
+       "ECP_256_BP",
+       "ECP_384_BP",
+       "ECP_512_BP",
+       "CURVE_25519",
+       "CURVE_448",
+       "MODP_3072",
+       "MODP_4096",
+       "MODP_6144",
+       "MODP_8192",
+       "MODP_2048",
+       "KE_NONE"
+      ],
+      "sn": [
+       "NO_EXT_SEQ"
+      ]
+     }
+    },
+    "ah_proposals": {},
+    "local-ts": [
+     "10.250.2.0/24"
+    ],
+    "remote-ts": [
+     "10.250.1.0/24"
+    ]
+   }
+  },
+  "local-id": "b.loop",
+  "remote-id": "a.loop",
+  "version": "IKEv2",
+  "sas": [
+   {
+    "uniqueid": "3",
+    "version": "2",
+    "state": "ESTABLISHED",
+    "local-host": "127.0.0.1",
+    "local-port": "4500",
+    "local-id": "b.loop",
+    "remote-host": "10.91.0.185",
+    "remote-port": "4500",
+    "remote-id": "a.loop",
+    "initiator-spi": "7f13f25f01b47d05",
+    "responder-spi": "d913fa2af90509a7",
+    "encr-alg": "AES_CBC",
+    "encr-keysize": "128",
+    "integ-alg": "HMAC_SHA2_256_128",
+    "prf-alg": "PRF_HMAC_SHA2_256",
+    "dh-group": "ECP_256",
+    "established": "38",
+    "rekey-time": "14242",
+    "child-sas": {}
+   }
+  ],
+  "routed": true,
+  "local-class": "pre-shared key",
+  "remote-class": "pre-shared key"
+ },
+ "cccccccc-0000-4000-8000-000000000003": {
+  "local-addrs": "10.91.0.185",
+  "remote-addrs": "192.0.2.99",
+  "children": {
+   "dddddddd-0000-4000-8000-000000000004": {
+    "mode": "TUNNEL",
+    "rekey_time": "3600",
+    "rekey_bytes": "0",
+    "rekey_packets": "0",
+    "dpd_action": "none",
+    "close_action": "none",
+    "esp_proposals": {
+     "0": {
+      "encr": [
+       "AES_GCM_16_128",
+       "AES_GCM_16_192",
+       "AES_GCM_16_256"
+      ],
+      "ke": [
+       "ECP_256",
+       "ECP_384",
+       "ECP_521",
+       "ECP_256_BP",
+       "ECP_384_BP",
+       "ECP_512_BP",
+       "CURVE_25519",
+       "CURVE_448",
+       "MODP_3072",
+       "MODP_4096",
+       "MODP_6144",
+       "MODP_8192",
+       "MODP_2048",
+       "KE_NONE"
+      ],
+      "sn": [
+       "NO_EXT_SEQ"
+      ]
+     },
+     "1": {
+      "encr": [
+       "AES_CBC_128",
+       "AES_CBC_192",
+       "AES_CBC_256"
+      ],
+      "integ": [
+       "HMAC_SHA2_256_128",
+       "HMAC_SHA2_384_192",
+       "HMAC_SHA2_512_256",
+       "HMAC_SHA1_96",
+       "AES_XCBC_96"
+      ],
+      "ke": [
+       "ECP_256",
+       "ECP_384",
+       "ECP_521",
+       "ECP_256_BP",
+       "ECP_384_BP",
+       "ECP_512_BP",
+       "CURVE_25519",
+       "CURVE_448",
+       "MODP_3072",
+       "MODP_4096",
+       "MODP_6144",
+       "MODP_8192",
+       "MODP_2048",
+       "KE_NONE"
+      ],
+      "sn": [
+       "NO_EXT_SEQ"
+      ]
+     }
+    },
+    "ah_proposals": {},
+    "local-ts": [
+     "10.250.5.0/24"
+    ],
+    "remote-ts": [
+     "10.250.6.0/24"
+    ]
+   }
+  },
+  "local-id": "a.loop",
+  "remote-id": "c.nowhere",
+  "version": "IKEv2",
+  "sas": [
+   {
+    "uniqueid": "2",
+    "version": "2",
+    "state": "CONNECTING",
+    "local-host": "10.91.0.185",
+    "local-port": "500",
+    "local-id": "%any",
+    "remote-host": "192.0.2.99",
+    "remote-port": "500",
+    "remote-id": "%any",
+    "initiator": "yes",
+    "initiator-spi": "7fd4a66acfa9e81f",
+    "responder-spi": "0000000000000000",
+    "tasks-active": [
+     "IKE_VENDOR",
+     "IKE_INIT",
+     "IKE_NATD",
+     "IKE_CERT_PRE",
+     "IKE_AUTH",
+     "IKE_CERT_POST",
+     "IKE_CONFIG",
+     "IKE_AUTH_LIFETIME",
+     "IKE_MOBIKE",
+     "IKE_ESTABLISH",
+     "CHILD_CREATE"
+    ],
+    "child-sas": {}
+   }
+  ],
+  "routed": true,
+  "local-class": "pre-shared key",
+  "remote-class": "pre-shared key"
+ }
+}

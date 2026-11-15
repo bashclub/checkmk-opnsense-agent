@@ -1,0 +1,63 @@
+{
+ "_comment": "NOT from the test VM: installed CHILD_SAs in the format of vici list-sas (strongSwan 6), added to the ESTABLISHED IKE_SAs of status.json because the kernel refuses CHILD_SAs to the firewall itself",
+ "aaaaaaaa-0000-4000-8000-000000000001": {
+  "dddddddd-0000-4000-8000-000000000001-1": {
+   "name": "dddddddd-0000-4000-8000-000000000001",
+   "uniqueid": "1",
+   "reqid": "1",
+   "state": "INSTALLED",
+   "mode": "TUNNEL",
+   "protocol": "ESP",
+   "spi-in": "c1a2b3c4",
+   "spi-out": "c5d6e7f8",
+   "encr-alg": "AES_GCM_16",
+   "encr-keysize": "256",
+   "dh-group": "CURVE_25519",
+   "bytes-in": "600000",
+   "packets-in": "100",
+   "use-in": "5",
+   "bytes-out": "1200000",
+   "packets-out": "120",
+   "use-out": "5",
+   "rekey-time": "3000",
+   "life-time": "3500",
+   "install-time": "600",
+   "local-ts": [
+    "10.250.1.0/24"
+   ],
+   "remote-ts": [
+    "10.250.2.0/24"
+   ]
+  }
+ },
+ "bbbbbbbb-0000-4000-8000-000000000002": {
+  "dddddddd-0000-4000-8000-000000000003-2": {
+   "name": "dddddddd-0000-4000-8000-000000000003",
+   "uniqueid": "2",
+   "reqid": "2",
+   "state": "INSTALLED",
+   "mode": "TUNNEL",
+   "protocol": "ESP",
+   "spi-in": "c1a2b3c4",
+   "spi-out": "c5d6e7f8",
+   "encr-alg": "AES_GCM_16",
+   "encr-keysize": "256",
+   "dh-group": "CURVE_25519",
+   "bytes-in": "1200000",
+   "packets-in": "100",
+   "use-in": "5",
+   "bytes-out": "600000",
+   "packets-out": "120",
+   "use-out": "5",
+   "rekey-time": "3000",
+   "life-time": "3500",
+   "install-time": "600",
+   "local-ts": [
+    "10.250.2.0/24"
+   ],
+   "remote-ts": [
+    "10.250.1.0/24"
+   ]
+  }
+ }
+}

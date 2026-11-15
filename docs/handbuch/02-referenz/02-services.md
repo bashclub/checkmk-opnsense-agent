@@ -24,7 +24,7 @@ liefert keinen Service.
 | `carpstatus` | `CARP: <Interface>@<VHID>` | erwarteter Zustand | anderer Zustand | – |
 | `gateway` | `Gateway <Name>` | ohne Verlust, Laufzeit bis 100 ms | Verlust oder Laufzeit über 100 ms | Verlust über 90 % oder keine Daten |
 | `openvpn` | `OpenVPN Server: <Name>`, `OpenVPN Client: <Name>`, `OpenVPN Connection: <Name>` | läuft bzw. verbunden | wartet auf Verbindung; Zertifikat läuft in unter 61 Tagen ab | Server down, nicht verbunden; Zertifikat in unter 31 Tagen |
-| `ipsec` | `IPsec Tunnel: <Name>` | Tunnel aufgebaut (mindestens eine Phase 2) | – | nicht verbunden, IPsec läuft nicht |
+| `ipsec` | `IPsec Tunnel: <Name>` | Tunnel aufgebaut mit Phase 2 bzw. allen Children | ab 1.2.18: nur ein Teil der Children einer Verbindung aufgebaut | nicht verbunden, IPsec läuft nicht |
 | `wireguard` | `WireGuard Client: <Name>` | verbunden; Roadwarrior auch getrennt | – | Site-to-Site ohne Handshake seit 5 min; Instanz läuft nicht |
 | `netbird` | `NetBird`, `NetBird Peer: <Name>` | ab 1.2.18: Daemon, Management und Signal verbunden; Peer verbunden | Management oder Signal getrennt; Peer `Connecting`/`Idle` oder Handshake älter als 5 min | Daemon nicht verbunden (z. B. `NeedsLogin`), keine Daten; Peer getrennt |
 | `unbound` | `Unbound DNS` | läuft, mit Anfragen und Cache-Treffern | – | läuft nicht |
@@ -54,7 +54,11 @@ Zu einzelnen Services:
   der Zahl der Verbindungen; Client-Instanzen, Legacy-Clients und Peer-to-Peer-Server ergeben
   `OpenVPN Connection: <Name>`. Clients mit einem Client-Overwrite (Client-spezifische Einstellungen) erscheinen
   zusätzlich als `OpenVPN Client: <Name>`. Deaktivierte Tunnel erscheinen nicht.
-- **IPsec:** nur wenn IPsec eingeschaltet ist, und nur das alte Tunnel-Modell (Phase 1/2), noch nicht die Verbindungen (swanctl) ab OPNsense 23.1.
+- **IPsec:** nur wenn IPsec eingeschaltet ist. Alte Tunnel (Phase 1/2) und ab 1.2.18 die Verbindungen
+  (VPN › IPsec › Verbindungen, swanctl). Name ist die Beschreibung, sonst die Gegenstelle. Bei Verbindungen müssen
+  alle eingeschalteten Children aufgebaut sein; fehlt eins, nennt der Text es. `not connected (CONNECTING)` heißt:
+  die Gegenstelle antwortet nicht, `not connected (ESTABLISHED)`: IKE steht, aber kein Child. Deaktivierte Tunnel
+  und Verbindungen erscheinen nicht.
 - **NetBird** ab 1.2.18, wenn `netbird` installiert ist (Plugin `os-netbird`): ein Service für den Daemon und je
   Peer einer, aus `netbird status --json`. Metriken: verbundene, gesamte und über Relay verbundene Peers; je Peer
   Latenz, Alter des letzten Handshakes und Traffic.
