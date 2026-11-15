@@ -1,7 +1,8 @@
 ---
 title: Services und Zustände
 audience: Anwender, Admin
-outline:
+outline: https://docs.bashclub.org/doc/services-und-zustande-PG5WxCx4Yc
+outline_id: 2d2853da-823b-4ec6-86d6-f389e061c920
 ---
 Der Agent liefert zwei Arten von Daten:
 - **Lokale Checks:** fertige Services mit Zustand, die der Agent selbst bewertet. Sie beschreiben die OPNsense

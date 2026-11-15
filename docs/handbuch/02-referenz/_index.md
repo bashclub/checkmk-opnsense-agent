@@ -1,7 +1,8 @@
 ---
 title: Referenz
 audience: Admin
-outline:
+outline: https://docs.bashclub.org/doc/referenz-C6v6oiO8m6
+outline_id: 7eb53313-d1c7-4a1c-8d45-7eda6db7d4ec
 ---
 Zum Nachschlagen: alle Optionen, alle Services mit ihren Zuständen und was sich am Agent erweitern lässt.
 

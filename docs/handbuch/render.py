@@ -217,7 +217,9 @@ def ensure_pages(dry_run):
                 URLS[path] = (doc["id"], base + doc["url"])
                 created.append(path)
                 print(f"create: {rel(path)} ({head['title']})")
-        # the order of the handbook (Outline puts new pages anywhere)
+    # the order of the handbook, after all pages exist: Outline puts a new page at the top, which moves the others;
+    # positions in ascending order (0, 1, ...) under each parent
+    for path, parent in articles():
         key = parent or ""
         position[key] = position.get(key, -1) + 1
         if not dry_run and path in URLS:

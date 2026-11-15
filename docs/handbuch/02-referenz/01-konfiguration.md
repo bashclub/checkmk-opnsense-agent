@@ -1,7 +1,8 @@
 ---
 title: Konfiguration und Kommandozeile
 audience: Admin
-outline:
+outline: https://docs.bashclub.org/doc/konfiguration-und-kommandozeile-RWbfbpASzy
+outline_id: d054b9bb-f5ac-4c72-a471-18662338e008
 ---
 ## Konfigurationsdatei
 `/usr/local/etc/checkmk.conf`, eine Option je Zeile, `name: wert`. Zeilen mit `#` am Anfang sind Kommentare, ebenso

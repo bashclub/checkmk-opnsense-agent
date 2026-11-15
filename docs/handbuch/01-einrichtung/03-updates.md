@@ -1,7 +1,8 @@
 ---
 title: "Updates: Release und Testing"
 audience: Admin
-outline:
+outline: https://docs.bashclub.org/doc/updates-release-und-testing-MHZE55In1Q
+outline_id: 3d986dff-2427-4f28-b451-144f5f1e8432
 ---
 Es gibt zwei Versionen des Agents, jeweils als Branch im Repository auf code.bashclub.org:
 

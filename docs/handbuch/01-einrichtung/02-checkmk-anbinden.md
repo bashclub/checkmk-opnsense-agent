@@ -1,7 +1,8 @@
 ---
 title: An Checkmk anbinden
 audience: Admin
-outline:
+outline: https://docs.bashclub.org/doc/an-checkmk-anbinden-xa1JS9mi5r
+outline_id: 198adc82-18a5-4aba-9a17-8a5bad549e1d
 ---
 ## Host anlegen
 In Checkmk die OPNsense wie einen Linux-Host anlegen (Setup › Hosts › Add host):

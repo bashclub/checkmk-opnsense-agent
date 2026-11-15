@@ -1,7 +1,8 @@
 ---
 title: Erweiterungen
 audience: Admin
-outline:
+outline: https://docs.bashclub.org/doc/erweiterungen-0krJek1taw
+outline_id: 754e2698-f69f-42d5-a241-08e6bcd11078
 ---
 ## Eigene Plugins und lokale Checks
 Wie beim Linux-Agent führt der Agent bei jeder Abfrage ausführbare Dateien aus zwei Verzeichnissen aus und hängt ihre

@@ -1,7 +1,8 @@
 ---
 title: Diagnose
 audience: Admin
-outline:
+outline: https://docs.bashclub.org/doc/diagnose-zp0w6NLXlL
+outline_id: e20cbd17-d0b5-49ad-96ce-63367cd82df1
 ---
 ## Läuft der Agent?
 ```sh

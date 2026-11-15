@@ -1,7 +1,8 @@
 ---
 title: Installation
 audience: Admin
-outline:
+outline: https://docs.bashclub.org/doc/installation-AvMohuRDbM
+outline_id: 97c0266e-9cb9-4fae-8917-5e18920c5c8a
 ---
 Der Agent ist eine einzelne Python-Datei. Python und die nötigen Module bringt die OPNsense mit, ein Paket gibt es
 nicht. Er läuft als Dienst (Daemon) und antwortet auf TCP-Port 6556, wie der Checkmk-Agent unter Linux.

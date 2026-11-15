@@ -1,7 +1,8 @@
 ---
 title: Fehlerbehebung
 audience: Admin
-outline:
+outline: https://docs.bashclub.org/doc/fehlerbehebung-nSWeqmuhdc
+outline_id: 11d84247-599c-4acc-84ac-3017786879d2
 ---
 - [Diagnose](01-diagnose.md): der Agent liefert nichts, ein Service fehlt oder ist falsch
 - [Bekannte Probleme](02-bekannte-probleme.md): offene Fehler und Einschränkungen mit Umgehung
