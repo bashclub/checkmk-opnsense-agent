@@ -95,6 +95,8 @@ UPDATE_API_URL = "https://code.bashclub.org/api/v1/repos/bashclub/checkmk-opnsen
 UPDATE_RAW_URL = UPDATE_REPO_URL + "/raw/branch/{branch}/opnsense_checkmk_agent.py"
 UPDATE_CHECK_INTERVAL = 86400 ## look for a new version once a day
 UPDATE_CHECK_RETRY = 3600 ## after an error (no internet, air-gapped) try again after an hour
+## own User-Agent: web servers with bad-bot filters block "python-requests/..." with 403
+UPDATE_HEADERS = {"User-Agent": f"checkmk-opnsense-agent/{__VERSION__}"}
 
 for _dir in (BASEDIR, VARDIR, LOCALDIR, PLUGINSDIR, SPOOLDIR, TASKDIR):
     if not os.path.exists(_dir):
@@ -570,7 +572,7 @@ class checkmk_checker(object):
     @staticmethod
     def _fetch_agent_version(branch):
         ## only the head of the file is read, __VERSION__ is in the first lines
-        _req = requests.get(UPDATE_RAW_URL.format(branch=branch),stream=True,timeout=5)
+        _req = requests.get(UPDATE_RAW_URL.format(branch=branch),headers=UPDATE_HEADERS,stream=True,timeout=5)
         try:
             if _req.status_code != 200:
                 raise ValueError(f"HTTP {_req.status_code}")
@@ -2571,7 +2573,7 @@ if __name__ == "__main__":
         import hashlib
         import difflib
         from packaging.version import Version
-        _github_req = requests.get(UPDATE_API_URL.format(ref=args.update),timeout=30)
+        _github_req = requests.get(UPDATE_API_URL.format(ref=args.update),headers=UPDATE_HEADERS,timeout=30)
         if _github_req.status_code != 200:
             raise Exception(f"Error {_github_req.status_code} from {UPDATE_REPO_URL}")
         _github_version = _github_req.json()

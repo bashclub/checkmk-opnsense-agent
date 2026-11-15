@@ -114,6 +114,9 @@ class TestFetchAgentVersion(unittest.TestCase):
         self.assertEqual(get.call_args.args[0],
                          "https://code.bashclub.org/bashclub/checkmk-opnsense-agent/raw/branch/testing/opnsense_checkmk_agent.py")
         self.assertEqual(get.call_args.kwargs.get("timeout"), 5)
+        # code.bashclub.org answers "python-requests/..." with 403 (bad-bot filter)
+        user_agent = get.call_args.kwargs.get("headers", {}).get("User-Agent", "")
+        self.assertTrue(user_agent.startswith("checkmk-opnsense-agent/"), user_agent)
         response.close.assert_called_once()
 
     def test_http_error(self):
