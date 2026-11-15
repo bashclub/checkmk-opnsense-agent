@@ -953,14 +953,21 @@ class checkmk_checker(object):
         if self._kea_dhcp4_enabled():
             _pools.update(self._kea_config_pools())
             _leases.update(self._kea_active_leases4())
+        _dnsmasq_pools = self._dnsmasq_pools()
+        if _dnsmasq_pools:
+            _pools.update(_dnsmasq_pools)
+            _leases.update(self._dnsmasq_active_leases4())
 
         if not _pools and not _leases:
             return []
 
-        _dhcpd_pid = self.pidof("dhcpd",-1)
-        _kea_pid = self.pidof("kea-dhcp4",-1)
+        _pid = -1
+        for _program in ("dhcpd","kea-dhcp4","dnsmasq"):
+            _pid = self.pidof(_program,-1)
+            if _pid > -1:
+                break
         _ret = ["<<<isc_dhcpd>>>"]
-        _ret.append("[general]\nPID: {0}".format(_dhcpd_pid if _dhcpd_pid > -1 else _kea_pid))
+        _ret.append("[general]\nPID: {0}".format(_pid))
         _ret.append("[pools]")
         for _start, _end in sorted(_pools,key=lambda x: int(ipaddress.IPv4Address(x[0]))):
             _ret.append("{0}\t{1}".format(_start,_end))
@@ -1036,6 +1043,42 @@ class checkmk_checker(object):
                 _range = self._kea_pool_range(_pool)
                 if _range:
                     _ret.append(_range)
+        return _ret
+
+    def _dnsmasq_pools(self):
+        ## IPv4 ranges of Services > Dnsmasq DNS & DHCP > DHCP ranges (default DHCP server of new installations)
+        _dnsmasq = self._config_reader().get("dnsmasq") or {}
+        if _dnsmasq.get("enable") != "1":
+            return []
+        _ret = []
+        for _range in self._as_list(_dnsmasq.get("dhcp_ranges")):
+            try:
+                _start = ipaddress.IPv4Address((_range.get("start_addr") or "").strip())
+                _end = ipaddress.IPv4Address((_range.get("end_addr") or "").strip())
+            except ValueError:
+                continue ## IPv6 / router advertisements
+            _ret.append((str(_start),str(_end)))
+        return _ret
+
+    def _dnsmasq_active_leases4(self,lease_file="/var/db/dnsmasq.leases"):
+        ## "<expiry> <mac> <ip> <hostname> <client-id>", expiry 0 = infinite; IPv6 leases and the duid line are skipped
+        _ret = []
+        _now = int(time.time())
+        try:
+            with open(lease_file,"r") as _f:
+                _lines = _f.read().splitlines()
+        except OSError:
+            return _ret
+        for _line in _lines:
+            _fields = _line.split()
+            if len(_fields) < 3 or not _fields[0].isdigit():
+                continue
+            try:
+                ipaddress.IPv4Address(_fields[2])
+            except ValueError:
+                continue
+            if int(_fields[0]) == 0 or int(_fields[0]) > _now:
+                _ret.append(_fields[2])
         return _ret
 
     def _kea_dhcp4_enabled(self):

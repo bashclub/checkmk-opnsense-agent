@@ -90,6 +90,35 @@ class TestKea(unittest.TestCase):
         self.assertEqual(leases, ["10.91.0.100", "192.168.1.100"])
 
 
+# /dnsmasq of a fresh OPNsense 26.7.9 (test VM) with a DHCP range on LAN and an IPv6 range, leases in dnsmasq format
+DNSMASQ = """<dnsmasq version="1.0.9"><enable>{enable}</enable><interface>lan</interface><port>53053</port>
+<dhcp><fqdn>1</fqdn><local>1</local></dhcp>
+<dhcp_ranges uuid="r1"><interface>lan</interface><start_addr>192.168.1.100</start_addr><end_addr>192.168.1.199</end_addr>
+<domain_type>range</domain_type><description>LAN</description></dhcp_ranges>
+<dhcp_ranges uuid="r2"><interface>lan</interface><start_addr>::</start_addr><constructor>lan</constructor><mode>ra-only</mode>
+<domain_type>range</domain_type></dhcp_ranges>
+</dnsmasq>"""
+DNSMASQ_LEASES = (f"{NOW + 3000} 52:54:00:00:00:01 192.168.1.100 laptop 01:52:54:00:00:00:01\n"
+                  f"{NOW - 10} 52:54:00:00:00:02 192.168.1.101 old *\n"
+                  "0 52:54:00:00:00:03 192.168.1.102 printer *\n"
+                  "duid 00:01:00:01:32:89:d6:f4:bc:24:11:72:51:42\n"
+                  f"{NOW + 3000} 1234 2001:db8::100 laptop 00:01:00:01:aa\n")
+
+
+class TestDnsmasq(unittest.TestCase):
+    def test_pools_and_active_leases(self):
+        lines = run_dhcp(DNSMASQ.format(enable=1), {"/var/db/dnsmasq.leases": DNSMASQ_LEASES})
+        self.assertEqual(section(lines), (["192.168.1.100\t192.168.1.199"], ["192.168.1.100", "192.168.1.102"]))
+
+    def test_disabled(self):
+        self.assertEqual(run_dhcp(DNSMASQ.format(enable=0), {"/var/db/dnsmasq.leases": DNSMASQ_LEASES}), [])
+
+    def test_dns_only_without_ranges(self):
+        """the test VM: dnsmasq enabled, no DHCP range, lease file with only the duid line."""
+        config = DNSMASQ.format(enable=1).split("<dhcp_ranges")[0] + "</dnsmasq>"
+        self.assertEqual(run_dhcp(config, {"/var/db/dnsmasq.leases": "duid 00:01:00:01:32:89:d6:f4:bc:24:11:72:51:42\n"}), [])
+
+
 class TestIsc(unittest.TestCase):
     def test_isc_only(self):
         lines = run_dhcp(ISC_CONFIG, {"/var/dhcpd/var/db/dhcpd.leases": ISC_LEASES})

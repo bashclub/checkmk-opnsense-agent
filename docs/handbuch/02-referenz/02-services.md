@@ -104,7 +104,7 @@ verschwinden.
 | `temperature` | `lnx_thermal` | Temperatur-Sensoren | Sensoren per `sysctl` |
 | `ssh` | `sshd_config` | SSH-Einstellungen | SSH eingeschaltet |
 | `label` | `labels` | Label `cmk/device_type:vm` in einer VM | – |
-| `dhcp` | `isc_dhcpd` | DHCP-Pools und aktive Leases; ab 1.2.18 auch von Kea DHCPv4 | ISC-DHCP oder Kea (in der OPNsense eingeschaltet); nicht Dnsmasq-DHCP |
+| `dhcp` | `isc_dhcpd` | DHCPv4-Pools und aktive Leases; ab 1.2.18 auch von Kea und Dnsmasq | ISC-DHCP, Kea oder Dnsmasq (eingeschaltet, mit DHCP-Bereich) |
 | `haproxy` | `haproxy` | Frontends, Backends, Server | Plugin `os-haproxy` |
 | `squid` | `squid` | Proxy-Statistik | Web-Proxy eingeschaltet und auf 127.0.0.1 erreichbar; [Squid-MKP](https://exchange.checkmk.com/p/squid) in Checkmk |
 | `smartinfo` | `disk_smart_info` | SMART-Werte der Festplatten | Plugin `os-smart`; [checkmk-smart-MKP](https://github.com/bashclub/checkmk-smart) in Checkmk (Alternative siehe unten) |
