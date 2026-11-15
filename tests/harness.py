@@ -19,7 +19,7 @@ AGENT_PATH = REPO / "opnsense_checkmk_agent.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 # paths the agent reads on an OPNsense; in the tests they come only from the test data, never from the test machine
-SYSTEM_PREFIXES = ("/conf/", "/usr/local/opnsense/", "/usr/local/etc/", "/tmp/pkg_upgrade.json", "/var/", "/etc/os-release")
+SYSTEM_PREFIXES = ("/conf/", "/usr/local/opnsense/", "/usr/local/etc/", "/tmp/pkg_upgrade.json", "/var/", "/etc/os-release", "/etc/rc.conf")
 
 _agent = None
 

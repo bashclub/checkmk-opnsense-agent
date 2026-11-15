@@ -124,17 +124,43 @@ def netbird_connected(*peers):
     return status
 
 
-def run_netbird(status):
-    commands = {"netbird status --json": json.dumps(status) if status is not None else ""}
+NETBIRD_PLUGIN_ON = config_xml("<OPNsense><netbird><settings><general><enable>1</enable></general></settings></netbird></OPNsense>")
+
+
+def run_netbird(status, config=NETBIRD_PLUGIN_ON, files=None, binary="netbird"):
+    commands = {f"{binary} status --json": json.dumps(status) if status is not None else ""}
     agent = load_agent()
-    with mock.patch.object(agent.checkmk_checker, "_first_existing_executable", side_effect=lambda *c: c[-1]):
-        with FakeOPNsense(commands=commands, now=NOW) as checker:
+    with mock.patch.object(agent.checkmk_checker, "_first_existing_executable", side_effect=lambda *c: binary):
+        with FakeOPNsense(config, commands=commands, files=files or {}, now=NOW) as checker:
             return checker.checklocal_netbird()
 
 
 class TestNetBird(unittest.TestCase):
     def test_not_installed(self):
         self.assertEqual(run_netbird(None), [])
+
+    def test_installed_but_switched_off(self):
+        """feedback Marc Risse: plugin installed, NetBird not enabled -> no service instead of CRIT "no data"."""
+        self.assertEqual(run_netbird(None, config=NETBIRD_PLUGIN_ON.replace("<enable>1</enable>", "<enable>0</enable>"),
+                                     files={"/etc/rc.conf.d/netbird": 'netbird_enable="NO"\n'},
+                                     binary="/usr/local/bin/netbird"), [])
+
+    def test_switched_off_does_not_call_netbird(self):
+        """"netbird status" waits 20s for a daemon that does not run and made every agent query slow."""
+        fake = FakeOPNsense(config_xml(""), now=NOW)
+        with fake as checker:
+            self.assertEqual(checker.checklocal_netbird(), [])
+        self.assertEqual([c for c in fake.unknown_commands if "netbird" in c], [])
+
+    def test_enabled_without_data_is_crit(self):
+        lines = run_netbird(None, binary="/usr/local/bin/netbird")
+        self.assertEqual(lines, ['2 "NetBird" netbird_peers_connected=0|netbird_peers_total=0 netbird status returned no data'])
+
+    def test_enabled_by_rc_conf(self):
+        """netbird package without the plugin, enabled in rc.conf"""
+        lines = run_netbird(NETBIRD_NEEDS_LOGIN, config=config_xml(""), files={"/etc/rc.conf": 'sshd_enable="YES"\nnetbird_enable="YES"\n'})
+        self.assertTrue(lines[0].startswith('2 "NetBird"'), lines)
+        self.assertEqual(run_netbird(NETBIRD_NEEDS_LOGIN, config=config_xml("")), [])
 
     def test_needs_login_is_crit(self):
         lines = run_netbird(NETBIRD_NEEDS_LOGIN)
@@ -157,7 +183,7 @@ class TestNetBird(unittest.TestCase):
         self.assertTrue(peer.startswith("1 "), peer)
 
     def test_broken_json(self):
-        with FakeOPNsense(commands={"netbird status --json": "{no json"}, now=NOW) as checker:
+        with FakeOPNsense(NETBIRD_PLUGIN_ON, commands={"netbird status --json": "{no json"}, now=NOW) as checker:
             with mock.patch.object(checker, "_first_existing_executable", side_effect=lambda *c: c[-1]):
                 lines = checker.checklocal_netbird()
         self.assertTrue(lines[0].startswith('2 "NetBird"') and "Unable to parse" in lines[0], lines)

@@ -1,4 +1,6 @@
 """Access control: onlyfrom and tenants with the dual-stack socket (IPv4 clients arrive as ::ffff:a.b.c.d)."""
+import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -74,6 +76,62 @@ class TestTenants(unittest.TestCase):
         with mock.patch.object(agent, "log"):
             server = make_server(agent, tenants="192.0.2.20#secret,192.0.2.21,192.0.2.22#,kunde.example.org#x")
         self.assertEqual(server.tenants, {"192.0.2.20": "secret", "192.0.2.21": None, "192.0.2.22": None})
+
+
+class TestConfigFile(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmp.name, "checkmk.conf")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, text, mtime):
+        with open(self.path, "w") as f:
+            f.write(text)
+        os.utime(self.path, (mtime, mtime))
+
+    def test_read_config(self):
+        """feedback Marc Risse: "skipservice ntpd" (without colon) was ignored silently."""
+        agent = load_agent()
+        self.write("# comment\nskipservice ntpd\nSkipCheck: ipmi  # no ipmi\nfoo: bar\nonlyfrom: 192.0.2.10\n", 1000)
+        with mock.patch.object(agent, "log") as log:
+            options = agent.read_config(self.path)
+        self.assertEqual(options, {"skipcheck": "ipmi", "onlyfrom": "192.0.2.10"})
+        messages = [call.args[0] for call in log.call_args_list]
+        self.assertIn(f"{self.path} line 2 ignored, expected 'name: value': skipservice ntpd", messages)
+        self.assertIn(f"{self.path} line 4: unknown option 'foo'", messages)
+
+    def test_running_daemon_applies_changes(self):
+        """feedback Marc Risse: a changed checkmk.conf needed a restart."""
+        agent = load_agent()
+        self.write("skipservice: ntpd\n", 1000)
+        with mock.patch.object(agent, "log"):
+            server = make_server(agent, skipservice="ntpd", configfile=self.path, cli_options={})
+            self.assertTrue(server.verify_request(None, ("::ffff:192.0.2.99", 1, 0, 0)))
+            self.write("skipservice: ntpd, HAProxy\nonlyfrom: 192.0.2.10\n", 2000)
+            self.assertFalse(server.verify_request(None, ("::ffff:192.0.2.99", 1, 0, 0)))
+            self.assertTrue(server.verify_request(None, ("::ffff:192.0.2.10", 1, 0, 0)))
+            self.assertEqual(server.skipservice, ["ntpd", "haproxy"])
+            self.write("# all removed\n", 3000)  # back to the command line options
+            self.assertTrue(server.verify_request(None, ("::ffff:192.0.2.99", 1, 0, 0)))
+            self.assertEqual(server.skipservice, [])
+
+    def test_encrypt_from_command_line_wins(self):
+        agent = load_agent()
+        self.write("encrypt: from-file\n", 1000)
+        with mock.patch.object(agent, "log"):
+            server = make_server(agent, encrypt="from-cli", configfile=self.path, cli_options={"encrypt": "from-cli"})
+            self.write("encrypt: changed\n", 2000)
+            server.verify_request(None, ("::ffff:192.0.2.99", 1, 0, 0))
+        self.assertEqual(server.encrypt, "from-cli")
+
+    def test_without_config_file(self):
+        agent = load_agent()
+        with mock.patch.object(agent, "log"):
+            server = make_server(agent, skipcheck="ipmi", configfile=self.path, cli_options={"skipcheck": "ipmi"})
+            self.assertTrue(server.verify_request(None, ("::ffff:192.0.2.99", 1, 0, 0)))
+        self.assertEqual(server.skipcheck, ["ipmi"])
 
 
 if __name__ == "__main__":

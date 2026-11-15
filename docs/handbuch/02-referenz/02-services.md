@@ -59,7 +59,7 @@ Zu einzelnen Services:
   alle eingeschalteten Children aufgebaut sein; fehlt eins, nennt der Text es. `not connected (CONNECTING)` heißt:
   die Gegenstelle antwortet nicht, `not connected (ESTABLISHED)`: IKE steht, aber kein Child. Deaktivierte Tunnel
   und Verbindungen erscheinen nicht.
-- **NetBird** ab 1.2.18, wenn `netbird` installiert ist (Plugin `os-netbird`): ein Service für den Daemon und je
+- **NetBird** ab 1.2.18, wenn NetBird eingeschaltet ist (Plugin `os-netbird` oder `netbird_enable` in `rc.conf`): ein Service für den Daemon und je
   Peer einer, aus `netbird status --json`. Metriken: verbundene, gesamte und über Relay verbundene Peers; je Peer
   Latenz, Alter des letzten Handshakes und Traffic.
 - **Geändert in 1.2.18 (OpenVPN):** Bis 1.2.17 fehlten Instanzen ganz oder der Check scheiterte (mehrere

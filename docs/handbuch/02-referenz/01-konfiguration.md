@@ -6,7 +6,12 @@ outline:
 ## Konfigurationsdatei
 `/usr/local/etc/checkmk.conf`, eine Option je Zeile, `name: wert`. Zeilen mit `#` am Anfang sind Kommentare, ebenso
 der Rest einer Zeile ab ` #` (Leerzeichen und `#`; deshalb gehört diese Folge nicht in ein Passwort). Die Datei ist
-optional. Änderungen gelten nach `--restart`. Bei mehrfach genannten Optionen gilt die letzte Zeile.
+optional. Bei mehrfach genannten Optionen gilt die letzte Zeile. Zeilen ohne `name: wert` (z. B. ohne Doppelpunkt)
+und unbekannte Optionen ignoriert der Agent mit einer Warnung im Systemlog.
+
+Ab 1.2.18 übernimmt der laufende Dienst Änderungen an `onlyfrom`, `encrypt`, `skipcheck`, `skipservice` und
+`tenants` bei der nächsten Abfrage, ohne Neustart (Systemlog: `options reloaded`). `port`, `expire_inventory` und
+die Verzeichnisse gelten erst nach `--restart`.
 
 ```
 port: 6556

@@ -182,6 +182,31 @@ def client_ip(address):
         return None
     return str(getattr(_ip,"ipv4_mapped",None) or _ip)
 
+CONFIG_OPTIONS = ("port","encrypt","onlyfrom","expire_inventory","skipcheck","skipservice","tenants","localdir","plugindir","spooldir")
+RELOADABLE_OPTIONS = ("encrypt","onlyfrom","skipcheck","skipservice","tenants") ## the running daemon applies changes of these
+
+def read_config(path):
+    ## {option: value} of the config file, lines "name: value"; other lines and unknown options are logged
+    try:
+        with open(path,"rt") as _f:
+            _lines = _f.read().splitlines()
+    except OSError:
+        return {}
+    _ret = {}
+    for _number, _line in enumerate(_lines,1):
+        if not _line.strip() or _line.strip().startswith("#"):
+            continue
+        _match = re.match(r"^\s*(\w+):\s*(.*?)(?:\s+#|$)",_line)
+        if not _match:
+            log(f"{path} line {_number} ignored, expected 'name: value': {_line.strip()}","warning")
+            continue
+        _key = _match.group(1).lower()
+        if _key not in CONFIG_OPTIONS:
+            log(f"{path} line {_number}: unknown option '{_match.group(1)}'","warning")
+            continue
+        _ret[_key] = _match.group(2)
+    return _ret
+
 def parse_ip_list(value,option):
     ## comma separated addresses, invalid entries are logged and ignored
     _ret = []
@@ -1564,7 +1589,26 @@ class checkmk_checker(object):
             return []
         return list(filter(lambda x: type(x) == dict,_peers))
 
+    def _netbird_enabled(self):
+        ## plugin os-netbird (Settings > enable, written to /etc/rc.conf.d/netbird) or netbird_enable in rc.conf
+        try:
+            if (((self._config_reader().get("OPNsense") or {}).get("netbird") or {}).get("settings") or {}).get("general",{}).get("enable") == "1":
+                return True
+        except AttributeError:
+            pass
+        for _rcfile in ("/etc/rc.conf.d/netbird","/etc/rc.conf","/etc/rc.conf.local"):
+            try:
+                with open(_rcfile,"r") as _f:
+                    _enable = re.findall(r"^\s*netbird_enable\s*=\s*\"?(\w+)",_f.read(),re.M)
+            except OSError:
+                continue
+            if _enable:
+                return _enable[-1].upper() in ("YES","TRUE","ON","1")
+        return False
+
     def checklocal_netbird(self):
+        if not self._netbird_enabled():
+            return [] ## not installed or switched off; "netbird status" would wait 20s for a daemon that does not run
         _netbird_bin = self._first_existing_executable("/usr/local/bin/netbird","/usr/bin/netbird","netbird")
         try:
             _status_raw = self._run_prog([_netbird_bin,"status","--json"],timeout=20,ignore_error=True).strip()
@@ -2092,25 +2136,51 @@ class checkmk_cached_process(object):
 
 class checkmk_server(TCPServer,checkmk_checker):
     address_family = socket.AF_INET6
-    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,expire_inventory=0,tenants=None,**kwargs):
+    def __init__(self,port,pidfile,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,expire_inventory=0,tenants=None,configfile=None,cli_options=None,**kwargs):
         self.tcp_port = port
         self.pidfile = pidfile
-        ## onlyfrom set: only these addresses, without a valid address nobody (fail closed)
-        self.onlyfrom = parse_ip_list(onlyfrom,"onlyfrom") if onlyfrom is not None else None
-        if self.onlyfrom == []:
-            log("onlyfrom contains no valid address, all connections are rejected","warning")
-        self.skipcheck = [_c.strip() for _c in skipcheck.split(",") if _c.strip()] if skipcheck else []
-        self.skipservice = [_s.strip().lower() for _s in skipservice.split(",") if _s.strip()] if skipservice else []
-        self.tenants = self._get_tenants(tenants) if type(tenants) == str else {}
+        self._apply_options(onlyfrom=onlyfrom,encrypt=encrypt,skipcheck=skipcheck,skipservice=skipservice,tenants=tenants)
+        ## a changed config file is applied by the running daemon (RELOADABLE_OPTIONS), see _reload_config
+        self.configfile = configfile
+        self._cli_options = cli_options if cli_options is not None else {}
+        self._config_mtime = self._get_config_mtime()
         self._available_sysctl_list = self._run_prog("sysctl -aN").split()
         self._available_sysctl_temperature_list = list(filter(lambda x: x.lower().find("temperature") > -1 and x.lower().find("cpu") == -1,self._available_sysctl_list))
-        self.encrypt = encrypt
         self.expire_inventory = expire_inventory
         self._mutex = threading.Lock()
         self.user = pwd.getpwnam("root")
         self.allow_reuse_address = True
         self.taskrunner = checkmk_taskrunner(self)
         TCPServer.__init__(self,("",port),checkmk_handler,bind_and_activate=False)
+
+    def _apply_options(self,onlyfrom=None,encrypt=None,skipcheck=None,skipservice=None,tenants=None):
+        ## onlyfrom set: only these addresses, without a valid address nobody (fail closed)
+        self.onlyfrom = parse_ip_list(onlyfrom,"onlyfrom") if onlyfrom is not None else None
+        if self.onlyfrom == []:
+            log("onlyfrom contains no valid address, all connections are rejected","warning")
+        self.encrypt = encrypt or None
+        self.skipcheck = [_c.strip() for _c in skipcheck.split(",") if _c.strip()] if skipcheck else []
+        self.skipservice = [_s.strip().lower() for _s in skipservice.split(",") if _s.strip()] if skipservice else []
+        self.tenants = self._get_tenants(tenants) if type(tenants) == str else {}
+
+    def _get_config_mtime(self):
+        try:
+            return os.stat(self.configfile).st_mtime if self.configfile else 0
+        except OSError:
+            return 0
+
+    def _reload_config(self):
+        ## command line options are the base, the config file overrides them (encrypt: command line wins)
+        _mtime = self._get_config_mtime()
+        if _mtime == self._config_mtime:
+            return
+        self._config_mtime = _mtime
+        _options = {_key: self._cli_options.get(_key) for _key in RELOADABLE_OPTIONS}
+        for _key, _value in (read_config(self.configfile) if _mtime else {}).items():
+            if _key in RELOADABLE_OPTIONS and not (_key == "encrypt" and self._cli_options.get("encrypt") is not None):
+                _options[_key] = _value
+        self._apply_options(**_options)
+        log(f"{self.configfile} changed, options reloaded (port and directories need a restart)")
 
     def _get_tenants(self,tenants):
         _ret = {}
@@ -2126,6 +2196,7 @@ class checkmk_server(TCPServer,checkmk_checker):
         return _ret
 
     def verify_request(self, request, client_address):
+        self._reload_config()
         _client = client_ip(client_address[0])
         if self.onlyfrom is not None and _client not in self.onlyfrom and _client not in self.tenants.keys():
             log(f"Client {_client} not allowed","warn")
@@ -2929,8 +3000,9 @@ if __name__ == "__main__":
         sys.exit(1)
     _parser.error = _args_error
     args = _parser.parse_args()
+    args.cli_options = {_key: getattr(args,_key,None) for _key in RELOADABLE_OPTIONS}
     if args.configfile and os.path.exists(args.configfile):
-        for _k,_v in re.findall(rf"^(\w+):\s*(.*?)(?:\s+#|$)",open(args.configfile,"rt").read(),re.M):
+        for _k,_v in read_config(args.configfile).items():
             if _k == "port":
                 args.port = int(_v)
             if _k == "encrypt" and args.encrypt == None:
