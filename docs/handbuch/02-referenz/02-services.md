@@ -133,8 +133,13 @@ cmk-push-agent:
   Attribute unter der Herstellerschwelle (Temperatur als Kühlproblem), letzter Selbsttest (abgebrochene Tests sind
   kein Fehler), Anstieg der Zähler 198, SAS Grown Defects und SAS-Fehler (WARN eine Woche lang), NVMe-Reserve
   weniger als 10 Punkte über der Schwelle. Bei einem Befund steht die Abhilfe im Text, bei ZFS mit dem Pool.
-- `Disk <Seriennummer> Wearout` (SSD/NVMe): Restlebensdauer (NVMe Percentage Used bzw. SMART-Attribut 177, 231,
-  233, 202, 169, 173) mit Prognose aus dem Verlauf, sobald sie über mindestens 30 Tage um 2 Punkte gesunken ist.
+- `Disk <Seriennummer> Wearout` (SSD/NVMe): Restlebensdauer mit Prognose aus dem Verlauf, sobald sie über mindestens
+  30 Tage um 2 Punkte gesunken ist. Quelle, in dieser Reihenfolge: NVMe „Percentage Used“; SMART-Attribute nach Namen
+  wie bei Proxmox (`Media_Wearout_Indicator`, `SSD_Life_Left`, `Wear_Leveling_Count`, `Perc_Write/Erase_Ct_BC`,
+  `Perc_Rated_Life_Remain`, `Remaining_Lifetime_Perc`, `Percent_Lifetime_Remain`, `Lifetime_Left`,
+  `PCT_Life_Remaining`, `Lifetime_Remaining`, `Percent_Life_Remaining`, `Percent_Lifetime_Used`,
+  `Perc_Rated_Life_Used`); ATA Device Statistics „Percentage Used Endurance Indicator“; SAS „Percentage used
+  endurance indicator“; zuletzt die Attribute 177, 231, 233, 202, 169, 173 nach Nummer. Der Text nennt die Quelle.
 Die Werte werden 30 Minuten zwischengespeichert, schlafende Platten nicht geweckt; der Verlauf liegt in
 `/var/lib/check_mk_agent/disks.json`. Der Name nutzt die Seriennummer, weil sich `/dev/ada0` beim Tausch ändern kann.
 

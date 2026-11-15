@@ -16,6 +16,8 @@
    "smartctl",
    "-j",
    "-a",
+   "-l",
+   "devstat",
    "-n",
    "standby",
    "/dev/ada0"
@@ -26,8 +28,8 @@
   "exit_status": 0
  },
  "local_time": {
-  "time_t": 1794778573,
-  "asctime": "Sun Nov 15 22:36:13 2026 CET"
+  "time_t": 1794779163,
+  "asctime": "Sun Nov 15 22:46:03 2026 CET"
  },
  "device": {
   "name": "/dev/ada0",
@@ -517,7 +519,9 @@
  },
  "power_cycle_count": 27,
  "temperature": {
-  "current": 33
+  "current": 33,
+  "lifetime_max": 33,
+  "lifetime_min": 33
  },
  "ata_smart_error_log": {
   "summary": {
@@ -580,6 +584,188 @@
    "remainder_scan_enabled": false
   },
   "power_up_scan_resume_minutes": 0
+ },
+ "ata_device_statistics": {
+  "pages": [
+   {
+    "number": 1,
+    "name": "General Statistics",
+    "revision": 1,
+    "table": [
+     {
+      "offset": 8,
+      "name": "Lifetime Power-On Resets",
+      "size": 4,
+      "value": 27,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     },
+     {
+      "offset": 16,
+      "name": "Power-on Hours",
+      "size": 4,
+      "value": 21504,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     },
+     {
+      "offset": 24,
+      "name": "Logical Sectors Written",
+      "size": 6,
+      "value": 5076120058,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     },
+     {
+      "offset": 40,
+      "name": "Logical Sectors Read",
+      "size": 6,
+      "value": 133855750,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     }
+    ]
+   },
+   {
+    "number": 4,
+    "name": "General Errors Statistics",
+    "revision": 1,
+    "table": [
+     {
+      "offset": 8,
+      "name": "Number of Reported Uncorrectable Errors",
+      "size": 4,
+      "value": 0,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     }
+    ]
+   },
+   {
+    "number": 5,
+    "name": "Temperature Statistics",
+    "revision": 1,
+    "table": [
+     {
+      "offset": 8,
+      "name": "Current Temperature",
+      "size": 1,
+      "value": 33,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     },
+     {
+      "offset": 32,
+      "name": "Highest Temperature",
+      "size": 1,
+      "value": 33,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     },
+     {
+      "offset": 40,
+      "name": "Lowest Temperature",
+      "size": 1,
+      "value": 33,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     }
+    ]
+   },
+   {
+    "number": 6,
+    "name": "Transport Statistics",
+    "revision": 1,
+    "table": [
+     {
+      "offset": 24,
+      "name": "Number of Interface CRC Errors",
+      "size": 4,
+      "value": 0,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     }
+    ]
+   },
+   {
+    "number": 7,
+    "name": "Solid State Device Statistics",
+    "revision": 1,
+    "table": [
+     {
+      "offset": 8,
+      "name": "Percentage Used Endurance Indicator",
+      "size": 1,
+      "value": 4,
+      "flags": {
+       "value": 192,
+       "string": "V--- ",
+       "valid": true,
+       "normalized": false,
+       "supports_dsn": false,
+       "monitored_condition_met": false
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "endurance_used": {
+  "current_percent": 4
  },
  "_rc": 0
 }

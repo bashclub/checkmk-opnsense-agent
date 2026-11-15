@@ -2022,7 +2022,13 @@ class checkmk_checker(object):
     SMART_RECENT_DAYS = 7 ## a rising counter warns for a week
     NVME_SPARE_MARGIN = 10
     VIRTUAL_MODEL_RE = r"QEMU|VBOX|VMware|Virtual|Msft"
-    WEAR_ATTRIBUTES = (177,231,233,202,169,173) ## normalized value = remaining life, the first one present counts
+    ## SMART attribute names (smartmontools drivedb) whose normalized value is the remaining life, in the order of
+    ## Proxmox (PVE::Diskmanage::get_wear_leveling_info) so that the value matches the Wearout column of Proxmox
+    WEAR_ATTRIBUTE_NAMES = ("Media_Wearout_Indicator","SSD_Life_Left","Wear_Leveling_Count","Perc_Write/Erase_Ct_BC",
+                            "Perc_Rated_Life_Remain","Remaining_Lifetime_Perc","Percent_Lifetime_Remain","Lifetime_Left",
+                            "PCT_Life_Remaining","Lifetime_Remaining","Percent_Life_Remaining","Percent_Lifetime_Used",
+                            "Perc_Rated_Life_Used")
+    WEAR_ATTRIBUTES = (177,231,233,202,169,173) ## last fallback by id, for drives without name in the drivedb
 
     def _smartctl_json(self,*args):
         try:
@@ -2080,7 +2086,8 @@ class checkmk_checker(object):
             if _dev.get("open_error"):
                 continue ## e.g. /dev/nda0 next to /dev/nvme0 of the same NVMe disk
             _name = _dev.get("name")
-            _data = self._smartctl_json("-a","-n","standby","-d",_dev.get("type","auto"),_name) if _dev.get("type") else self._smartctl_json("-a","-n","standby",_name)
+            ## -l devstat: ATA device statistics with the standard "Percentage Used Endurance Indicator"
+            _data = self._smartctl_json("-a","-l","devstat","-n","standby","-d",_dev.get("type","auto"),_name) if _dev.get("type") else self._smartctl_json("-a","-l","devstat","-n","standby",_name)
             if re.search(self.VIRTUAL_MODEL_RE,str(_data.get("model_name",""))):
                 _virtual += 1
                 continue
@@ -2123,6 +2130,32 @@ class checkmk_checker(object):
         if _virtual:
             _text += f", {_virtual} virtual without SMART hidden"
         return [f'0 "Disks" disks={len(_records)};;;0 {_text}'] + _ret
+
+    def _disk_wear(self,data,attrs,nvme):
+        ## remaining life in % and its source: NVMe, SMART attribute by name (like Proxmox), ATA device statistics,
+        ## SAS endurance indicator, SMART attribute by id
+        if type(nvme.get("percentage_used")) == int:
+            return max(0,100 - nvme["percentage_used"]), "NVMe Percentage Used"
+        for _name in self.WEAR_ATTRIBUTE_NAMES:
+            for _attr in attrs.values():
+                if _attr.get("name") == _name and type(_attr.get("value")) == int:
+                    if _name.endswith("_Used"): ## raw value is the used life in percent
+                        _raw = (_attr.get("raw") or {}).get("value")
+                        if type(_raw) == int and 0 <= _raw <= 255:
+                            return max(0,100 - _raw), _name
+                        continue
+                    return min(100,_attr["value"]), _name
+        for _page in ((data.get("ata_device_statistics") or {}).get("pages") or []):
+            for _entry in _page.get("table") or []:
+                if _entry.get("name") == "Percentage Used Endurance Indicator" and type(_entry.get("value")) == int \
+                        and (_entry.get("flags") or {}).get("valid",True):
+                    return max(0,100 - _entry["value"]), "ATA Percentage Used Endurance Indicator"
+        if type(data.get("scsi_percentage_used_endurance_indicator")) == int:
+            return max(0,100 - data["scsi_percentage_used_endurance_indicator"]), "SAS Percentage Used Endurance Indicator"
+        for _attr_id in self.WEAR_ATTRIBUTES:
+            if _attr_id in attrs and type(attrs[_attr_id].get("value")) == int:
+                return min(100,attrs[_attr_id]["value"]), "{0} ({1})".format(attrs[_attr_id].get("name",""),_attr_id)
+        return None, ""
 
     def _disk_lines(self,device,data,zpool_status,state,now):
         _proto = (data.get("device") or {}).get("protocol","")
@@ -2245,14 +2278,7 @@ class checkmk_checker(object):
         ## wearout of SSD/NVMe: remaining life with forecast
         if not _is_ssd:
             return _ret, 0
-        _life, _source = None, ""
-        if type(_nvme.get("percentage_used")) == int:
-            _life, _source = max(0,100 - _nvme["percentage_used"]), "NVMe Percentage Used"
-        else:
-            for _attr_id in self.WEAR_ATTRIBUTES:
-                if _attr_id in _attrs and type(_attrs[_attr_id].get("value")) == int:
-                    _life, _source = min(100,_attrs[_attr_id]["value"]), _attrs[_attr_id].get("name","")
-                    break
+        _life, _source = self._disk_wear(data,_attrs,_nvme)
         if _life is None:
             if _standby:
                 _ret.append(f'0 "Disk {_id} Wearout" - disk in standby, wearout not read, {_desc}')

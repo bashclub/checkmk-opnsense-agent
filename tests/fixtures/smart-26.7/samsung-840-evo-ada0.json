@@ -16,6 +16,8 @@
    "smartctl",
    "-j",
    "-a",
+   "-l",
+   "devstat",
    "-n",
    "standby",
    "/dev/ada0"
@@ -26,8 +28,8 @@
   "exit_status": 0
  },
  "local_time": {
-  "time_t": 1794778549,
-  "asctime": "Sun Nov 15 22:35:49 2026 CET"
+  "time_t": 1794779158,
+  "asctime": "Sun Nov 15 22:45:58 2026 CET"
  },
  "device": {
   "name": "/dev/ada0",
@@ -175,8 +177,8 @@
      "auto_keep": true
     },
     "raw": {
-     "value": 39779,
-     "string": "39779"
+     "value": 39780,
+     "string": "39780"
     }
    },
    {
@@ -439,8 +441,8 @@
      "auto_keep": true
     },
     "raw": {
-     "value": 19179122747,
-     "string": "19179122747"
+     "value": 19179170867,
+     "string": "19179170867"
     }
    }
   ]
@@ -450,7 +452,7 @@
   "threshold_percent": 10
  },
  "power_on_time": {
-  "hours": 39779
+  "hours": 39780
  },
  "power_cycle_count": 795,
  "endurance_used": {

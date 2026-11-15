@@ -54,7 +54,7 @@ class TestRealDisks(unittest.TestCase):
         lines = Disks("samsung-840-evo").run()
         self.assertEqual(lines["Disks"], '0 "Disks" disks=1;;;0 1 disk(s) (1 SSD/NVMe, 0 HDD/other)')
         self.assertEqual(lines["Disk TESTSERIAL840EVO SMART"],
-                         '0 "Disk TESTSERIAL840EVO SMART" temp=27;;;|power_on_hours=39779;;;0 SMART PASSED, '
+                         '0 "Disk TESTSERIAL840EVO SMART" temp=27;;;|power_on_hours=39780;;;0 SMART PASSED, '
                          '/dev/ada0 Samsung SSD 840 EVO 250GB (ssd, 250 GB)')
         self.assertEqual(lines["Disk TESTSERIAL840EVO Wearout"],
                          '0 "Disk TESTSERIAL840EVO Wearout" life_remaining=82;20;10;0;100 remaining life 82% '
@@ -63,7 +63,8 @@ class TestRealDisks(unittest.TestCase):
     def test_vickter_with_attribute_173_and_198(self):
         lines = Disks("vickter-ssd").run()
         self.assertIn("uncorr=0;;;0|temp=33", lines["Disk TESTSERIALVICKTER SMART"])
-        self.assertIn("remaining life 100% (from Unknown_Attribute)", lines["Disk TESTSERIALVICKTER Wearout"])
+        # attribute 173 is unknown to the drivedb (value 100), the device statistics say 4% used
+        self.assertIn("remaining life 96% (from ATA Percentage Used Endurance Indicator)", lines["Disk TESTSERIALVICKTER Wearout"])
 
     def test_nvme_listed_twice_and_aborted_self_test(self):
         """/dev/nda0 fails to open and is skipped; an aborted self-test (code 1) is no failure (pve-disks: CRIT)."""
@@ -132,6 +133,42 @@ class TestFindings(unittest.TestCase):
         line = run.run(NOW + 40 * DAY)["Disk TESTSERIAL840EVO Wearout"]
         self.assertTrue(line.startswith("1 ") and "forecast 0% in about 80 days" in line, line)
         self.assertIn("order a spare disk", line)
+
+
+class TestWearSources(unittest.TestCase):
+    """remaining life from every known source, in the order NVMe, attribute names (Proxmox), ATA device statistics,
+    SAS, attribute ids"""
+
+    def wear(self, data):
+        with FakeOPNsense() as checker:
+            attrs = {a["id"]: a for a in (data.get("ata_smart_attributes") or {}).get("table", [])}
+            return checker._disk_wear(data, attrs, data.get("nvme_smart_health_information_log") or {})
+
+    def attrs(self, *entries):
+        return {"ata_smart_attributes": {"table": [dict(id=i, name=n, value=v, raw={"value": r}) for i, n, v, r in entries]}}
+
+    def test_attribute_names_like_proxmox(self):
+        for name in ("Media_Wearout_Indicator", "SSD_Life_Left", "Wear_Leveling_Count", "Perc_Rated_Life_Remain",
+                     "Remaining_Lifetime_Perc", "Percent_Lifetime_Remain", "Lifetime_Left", "PCT_Life_Remaining"):
+            self.assertEqual(self.wear(self.attrs((240, name, 77, 123))), (77, name))
+
+    def test_used_attributes_count_down_from_the_raw_value(self):
+        self.assertEqual(self.wear(self.attrs((245, "Percent_Lifetime_Used", 100, 7))), (93, "Percent_Lifetime_Used"))
+
+    def test_order_name_before_statistics_before_id(self):
+        data = self.attrs((173, "Unknown_Attribute", 100, 0), (202, "Percent_Lifetime_Remain", 70, 30))
+        data["ata_device_statistics"] = {"pages": [{"table": [{"name": "Percentage Used Endurance Indicator", "value": 40}]}]}
+        self.assertEqual(self.wear(data), (70, "Percent_Lifetime_Remain"))
+        del data["ata_smart_attributes"]["table"][1]
+        self.assertEqual(self.wear(data), (60, "ATA Percentage Used Endurance Indicator"))
+        del data["ata_device_statistics"]
+        self.assertEqual(self.wear(data), (100, "Unknown_Attribute (173)"))
+
+    def test_sas(self):
+        self.assertEqual(self.wear({"scsi_percentage_used_endurance_indicator": 3}), (97, "SAS Percentage Used Endurance Indicator"))
+
+    def test_nothing_known(self):
+        self.assertEqual(self.wear(self.attrs((9, "Power_On_Hours", 99, 1000))), (None, ""))
 
 
 class TestWithoutDisks(unittest.TestCase):
