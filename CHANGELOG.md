@@ -7,6 +7,9 @@ After an update, run a service discovery in Checkmk: several checks report new s
 services that were wrong before.
 
 ## 1.2.19 – testing
+- **Disks** (SMART and wearout like "PVE Disks" of cmk-push-agent, needs plugin os-smart): `Disks`,
+  `Disk <serial> SMART` (self-assessment, attributes below threshold, last self-test, rising counters, NVMe spare) and
+  `Disk <serial> Wearout` (remaining life of SSD/NVMe with forecast). Aborted self-tests are no failure.
 - Config file: a known option without colon (`skipservice ntpd`) is read, with a note in the system log (#2).
 
 ## 1.2.18 – 2026-11-15

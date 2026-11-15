@@ -1,0 +1,37 @@
+{
+ "json_format_version": [
+  1,
+  0
+ ],
+ "smartctl": {
+  "version": [
+   7,
+   5
+  ],
+  "pre_release": false,
+  "svn_revision": "5714",
+  "platform_info": "FreeBSD 15.1-RELEASE-p6 amd64",
+  "build_info": "(local build)",
+  "argv": [
+   "smartctl",
+   "--scan-open",
+   "-j"
+  ],
+  "exit_status": 0
+ },
+ "devices": [
+  {
+   "name": "/dev/nda0",
+   "info_name": "/dev/nda0",
+   "type": "scsi",
+   "protocol": "SCSI",
+   "open_error": "INQUIRY failed"
+  },
+  {
+   "name": "/dev/nvme0",
+   "info_name": "/dev/nvme0",
+   "type": "nvme",
+   "protocol": "NVMe"
+  }
+ ]
+}

@@ -1,0 +1,36 @@
+{
+ "json_format_version": [
+  1,
+  0
+ ],
+ "smartctl": {
+  "version": [
+   7,
+   5
+  ],
+  "pre_release": false,
+  "svn_revision": "5714",
+  "platform_info": "FreeBSD 15.1-RELEASE-p6 amd64",
+  "build_info": "(local build)",
+  "argv": [
+   "smartctl",
+   "-j",
+   "-a",
+   "-n",
+   "standby",
+   "/dev/nda0"
+  ],
+  "messages": [
+   {
+    "string": "Smartctl open device: /dev/nda0 failed: INQUIRY failed",
+    "severity": "error"
+   }
+  ],
+  "exit_status": 2
+ },
+ "local_time": {
+  "time_t": 1794778550,
+  "asctime": "Sun Nov 15 22:35:50 2026 CET"
+ },
+ "_rc": 2
+}

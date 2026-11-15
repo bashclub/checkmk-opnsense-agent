@@ -56,6 +56,7 @@ import syslog
 import requests
 import hashlib
 import csv
+import shutil
 from urllib3.connection import HTTPConnection
 from urllib3.connectionpool import HTTPConnectionPool
 from requests.adapters import HTTPAdapter
@@ -2004,6 +2005,286 @@ class checkmk_checker(object):
             _ret.append('{0} "Caddy Domain: {1}" upstreams_up={2}|upstreams={3}{4} {5}'.format(
                 _status,_name,len(_upstreams) - len(_down),len(_upstreams),_expiredays,", ".join(_texts) or "OK"))
         return _ret
+
+    ## Disks: SMART state and wearout of physical disks, like "PVE Disks" of cmk-push-agent. Only what Checkmk's
+    ## smart_posix does not evaluate: self-assessment, attributes below the vendor threshold, last self-test, rise of
+    ## counters Checkmk ignores (198, SAS grown defects/uncorrected errors), NVMe spare close to the threshold, and the
+    ## remaining life of SSD/NVMe with a forecast. Needs smartctl (plugin os-smart).
+    DISKS_CACHE = 1800 ## seconds; smartctl reads every disk
+    DISKS_STATE = os.path.join(VARDIR,"disks.json")
+    WEAR_WARN = 20 ## remaining life in %
+    WEAR_CRIT = 10
+    FORECAST_WARN_DAYS = 180
+    FORECAST_CRIT_DAYS = 60
+    FORECAST_MIN_DROP = 2 ## percentage points over at least FORECAST_MIN_DAYS before a forecast is made
+    FORECAST_MIN_DAYS = 30
+    FORECAST_WINDOW_DAYS = 365
+    SMART_RECENT_DAYS = 7 ## a rising counter warns for a week
+    NVME_SPARE_MARGIN = 10
+    VIRTUAL_MODEL_RE = r"QEMU|VBOX|VMware|Virtual|Msft"
+    WEAR_ATTRIBUTES = (177,231,233,202,169,173) ## normalized value = remaining life, the first one present counts
+
+    def _smartctl_json(self,*args):
+        try:
+            _out = subprocess.run(["smartctl","-j"] + list(args),capture_output=True,text=True,timeout=30,stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return {"_error": "timeout after 30s"}
+        except OSError as e:
+            return {"_error": str(e)}
+        try:
+            _json = json.loads(_out.stdout)
+        except ValueError:
+            return {"_error": (_out.stdout or _out.stderr).strip()[:200] or f"exit {_out.returncode}"}
+        _json["_rc"] = _out.returncode
+        return _json
+
+    def _disks_state(self,state=None):
+        ## counters and wearout history across restarts of the agent
+        try:
+            if state is None:
+                with open(self.DISKS_STATE,"r") as _f:
+                    return json.load(_f)
+            os.makedirs(os.path.dirname(self.DISKS_STATE),exist_ok=True)
+            with open(self.DISKS_STATE + ".tmp","w") as _f:
+                json.dump(state,_f)
+            os.replace(self.DISKS_STATE + ".tmp",self.DISKS_STATE)
+        except (OSError,ValueError):
+            pass
+        return {}
+
+    @staticmethod
+    def _disk_zfs_hint(device,zpool_status):
+        ## replacement hint: the pool of the disk, if it is in one
+        _names = [os.path.basename(device)]
+        _nvme = re.match(r"nvme(\d+)$",_names[0])
+        if _nvme: ## smartctl talks to /dev/nvme0, ZFS uses the namespace nda0 (or nvd0)
+            _names += [f"nda{_nvme.group(1)}",f"nvd{_nvme.group(1)}"]
+        _pool = None
+        for _line in zpool_status.splitlines():
+            _m = re.match(r"\s*pool:\s*(\S+)",_line)
+            if _m:
+                _pool = _m.group(1)
+            elif _pool and any(re.search(rf"(^|/){re.escape(_n)}(p\d+|s\d+)?\s",_line.strip() + " ") for _n in _names):
+                return f"ZFS pool {_pool}: replace the disk with zpool replace {_pool} (then boot loader: gpart bootcode)"
+        return f"save/move the data of {device}"
+
+    def _disk_records(self):
+        ## physical disks from smartctl --scan-open: [(device, smartctl -a json)], virtual ones counted only
+        _scan = self._smartctl_json("--scan-open")
+        if "_error" in _scan:
+            return None, 0, _scan["_error"]
+        _records = []
+        _serials = set()
+        _virtual = 0
+        for _dev in _scan.get("devices",[]):
+            if _dev.get("open_error"):
+                continue ## e.g. /dev/nda0 next to /dev/nvme0 of the same NVMe disk
+            _name = _dev.get("name")
+            _data = self._smartctl_json("-a","-n","standby","-d",_dev.get("type","auto"),_name) if _dev.get("type") else self._smartctl_json("-a","-n","standby",_name)
+            if re.search(self.VIRTUAL_MODEL_RE,str(_data.get("model_name",""))):
+                _virtual += 1
+                continue
+            _serial = _data.get("serial_number")
+            if _serial and _serial in _serials:
+                continue
+            _serials.add(_serial)
+            _records.append((_name,_data))
+        return _records, _virtual, None
+
+    def checklocal_disks(self):
+        if not shutil.which("smartctl",path="/usr/local/sbin:/usr/sbin:/sbin:/usr/local/bin:/usr/bin"):
+            return [] ## plugin os-smart not installed
+        _now = time.time()
+        _cache = self._get_storedata("disks","lines")
+        if _cache and _now - _cache.get("time",0) < self.DISKS_CACHE:
+            return _cache.get("lines",[])
+        _lines = self._disks_lines(_now)
+        self._set_storedata("disks","lines",{"time": _now,"lines": _lines})
+        return _lines
+
+    def _disks_lines(self,now):
+        _records, _virtual, _error = self._disk_records()
+        if _error:
+            return [f'3 "Disks" - smartctl --scan-open failed: {_error}']
+        if not _records:
+            if _virtual or self._run_prog("dmesg",timeout=10).lower().find("hypervisor:") > -1:
+                return [] ## virtual machine: no physical disks
+            return ['3 "Disks" disks=0;;;0 no disks found by smartctl --scan-open - check the controller (dmesg), smartctl --scan']
+        _zpool = self._run_prog("zpool status -P",timeout=20)
+        _state = self._disks_state()
+        _ret = []
+        _ssd = 0
+        for _device, _data in _records:
+            _lines, _is_ssd = self._disk_lines(_device,_data,_zpool,_state,now)
+            _ret += _lines
+            _ssd += _is_ssd
+        self._disks_state(_state)
+        _text = f"{len(_records)} disk(s) ({_ssd} SSD/NVMe, {len(_records) - _ssd} HDD/other)"
+        if _virtual:
+            _text += f", {_virtual} virtual without SMART hidden"
+        return [f'0 "Disks" disks={len(_records)};;;0 {_text}'] + _ret
+
+    def _disk_lines(self,device,data,zpool_status,state,now):
+        _proto = (data.get("device") or {}).get("protocol","")
+        _model = data.get("model_name") or data.get("scsi_model_name") or "?"
+        _serial = data.get("serial_number") or (data.get("wwn") or {}).get("id") or os.path.basename(device)
+        _id = re.sub(r"\s+","_",str(_serial))
+        _rotation = data.get("rotation_rate")
+        _is_ssd = _proto == "NVMe" or _rotation == 0 or (type(_rotation) == str and "Solid State" in _rotation)
+        _type = "nvme" if _proto == "NVMe" else ("ssd" if _is_ssd else "hdd")
+        _size = (data.get("user_capacity") or {}).get("bytes") or (data.get("nvme_total_capacity") or 0)
+        _desc = "{0} {1} ({2}, {3:.0f} GB)".format(device,_model,_type,(_size or 0) / 1e9)
+        _fix = self._disk_zfs_hint(device,zpool_status)
+        _attrs = dict((_a.get("id"),_a) for _a in ((data.get("ata_smart_attributes") or {}).get("table") or []))
+        _nvme = data.get("nvme_smart_health_information_log") or {}
+        _disk_state = state.setdefault(_id,{})
+        _status, _replace, _msgs, _perf = 0, 0, [], []
+        _standby = data.get("_rc",0) == 2 and "standby" in json.dumps(data.get("smartctl",{})).lower()
+
+        if "_error" in data:
+            _status = 3
+            _msgs.append(f"smartctl {device}: {data['_error']} - check a hanging disk/controller (dmesg), smartctl -a {device}")
+        elif _standby:
+            _msgs.append("disk in standby, counters not read")
+        else:
+            _passed = (data.get("smart_status") or {}).get("passed")
+            _support = data.get("smart_support") or {}
+            if _passed is True:
+                _msgs.append("SMART PASSED")
+            elif _passed is False:
+                _status, _replace = 2, 2
+                _msgs.append("SMART self-assessment FAILED - the disk reports an imminent failure")
+            elif _support.get("available") is False:
+                _status = 3
+                _msgs.append("SMART not available (disk/controller delivers no data) - behind a RAID controller use smartctl -d, attach the disk directly (HBA/IT mode)")
+            elif _support.get("enabled") is False:
+                _status = 3
+                _msgs.append(f"SMART is disabled on the disk - smartctl -s on {device}")
+            else:
+                _status = 3
+                _errors = "; ".join(_m.get("string","") for _m in (data.get("smartctl") or {}).get("messages",[]) if _m.get("severity") == "error")
+                _msgs.append(f"SMART result unknown{': ' + _errors if _errors else ''} - smartctl -a {device}")
+
+        ## attributes below the vendor threshold; temperature is a cooling problem, not a defect
+        _now_failing = [_a.get("name","?") for _a in _attrs.values() if _a.get("when_failed") == "now"]
+        _hot = [_a for _a in _now_failing if "temp" in _a.lower()]
+        _bad = [_a for _a in _now_failing if "temp" not in _a.lower()]
+        if _bad:
+            _status, _replace = 2, 2
+            _msgs.append("attribute(s) below the vendor threshold: " + ",".join(sorted(_bad)))
+        if _hot:
+            _status = 2
+            _msgs.append("temperature below the vendor threshold ({0}) - check cooling/airflow".format(",".join(sorted(_hot))))
+        _past = [_a.get("name","?") for _a in _attrs.values() if _a.get("when_failed") == "past"]
+        if _past:
+            _msgs.append("below the threshold in the past: " + ",".join(sorted(_past)))
+
+        ## NVMe spare: Checkmk is CRIT below the threshold, warn while it is close
+        _spare, _spare_thr = _nvme.get("available_spare"), _nvme.get("available_spare_threshold")
+        if type(_spare) == int and type(_spare_thr) == int:
+            _perf.append(f"spare={_spare};{_spare_thr + self.NVME_SPARE_MARGIN};{_spare_thr};0;100")
+            if _spare_thr <= _spare < _spare_thr + self.NVME_SPARE_MARGIN:
+                _status, _replace = max(_status,1), max(_replace,1)
+                _msgs.append(f"spare blocks {_spare}% only just above the threshold {_spare_thr}%")
+
+        ## counters that only rise and Checkmk does not evaluate: a stable value is history, a rise warns for a week
+        _counters = {}
+        if 198 in _attrs:
+            _counters["uncorr"] = ("uncorrectable sectors (198)",(_attrs[198].get("raw") or {}).get("value"))
+        if "scsi_grown_defect_list" in data:
+            _counters["scsi_defects"] = ("grown defects",data.get("scsi_grown_defect_list"))
+        _errlog = data.get("scsi_error_counter_log") or {}
+        _uncorr = [(_errlog.get(_k) or {}).get("total_uncorrected_errors") for _k in ("read","write","verify")]
+        if any(type(_v) == int for _v in _uncorr):
+            _counters["scsi_uncorr"] = ("uncorrected read/write errors",sum(_v for _v in _uncorr if type(_v) == int))
+        for _key, (_label, _value) in _counters.items():
+            if type(_value) != int:
+                continue
+            _perf.append(f"{_key}={_value};;;0")
+            _old = _disk_state.get(_key)
+            if not _old or _value < _old.get("value",_value):
+                _old = {"value": _value,"time": 0,"before": _value} ## first run or reset: baseline
+            elif _value > _old["value"]:
+                _old = {"value": _value,"time": now,"before": _old["value"]}
+            _disk_state[_key] = _old
+            if _value == 0:
+                continue
+            if _old["time"] and now - _old["time"] < self.SMART_RECENT_DAYS * 86400:
+                _status, _replace = max(_status,1), max(_replace,1)
+                _msgs.append("{0} rose to {1} (before {2}, {3})".format(_label,_value,_old["before"],time.strftime("%d.%m. %H:%M",time.localtime(_old["time"]))))
+            else:
+                _msgs.append(f"{_value} {_label} (stable)")
+
+        ## last self-test; aborted or interrupted is no failure (NVMe 1-4, ATA status 1-2)
+        _ata_tests = (((data.get("ata_smart_self_test_log") or {}).get("standard") or {}).get("table")) or []
+        _nvme_tests = (data.get("nvme_self_test_log") or {}).get("table") or []
+        _test = None
+        if _ata_tests:
+            _st = _ata_tests[0].get("status") or {}
+            _code = (_st.get("value",0) >> 4) if _st.get("value",0) > 15 else _st.get("value",0)
+            _test = (_st.get("passed") is not True and 3 <= _code <= 8,_st.get("string",""),_ata_tests[0].get("lifetime_hours"))
+        elif _nvme_tests:
+            _result = _nvme_tests[0].get("self_test_result") or {}
+            _test = (5 <= _result.get("value",0) <= 7,_result.get("string",""),_nvme_tests[0].get("power_on_hours"))
+        if _test and _test[0]:
+            _status, _replace = 2, 2
+            _msgs.append(f"last self-test failed: {_test[1]} (at {_test[2]} power-on hours; a passing smartctl -t long {device} clears it)")
+        if _replace == 2:
+            _msgs.append(f"replace the disk - {_fix}")
+        elif _replace == 1:
+            _msgs.append(f"self-test smartctl -t long {device}, keep a spare - {_fix}")
+
+        _temp = (data.get("temperature") or {}).get("current")
+        _hours = (data.get("power_on_time") or {}).get("hours")
+        if type(_temp) == int:
+            _perf.append(f"temp={_temp};;;")
+        if type(_hours) == int:
+            _perf.append(f"power_on_hours={_hours};;;0")
+        _ret = ['{0} "Disk {1} SMART" {2} {3}, {4}'.format(_status,_id,"|".join(_perf) or "-",", ".join(_msgs),_desc)]
+
+        ## wearout of SSD/NVMe: remaining life with forecast
+        if not _is_ssd:
+            return _ret, 0
+        _life, _source = None, ""
+        if type(_nvme.get("percentage_used")) == int:
+            _life, _source = max(0,100 - _nvme["percentage_used"]), "NVMe Percentage Used"
+        else:
+            for _attr_id in self.WEAR_ATTRIBUTES:
+                if _attr_id in _attrs and type(_attrs[_attr_id].get("value")) == int:
+                    _life, _source = min(100,_attrs[_attr_id]["value"]), _attrs[_attr_id].get("name","")
+                    break
+        if _life is None:
+            if _standby:
+                _ret.append(f'0 "Disk {_id} Wearout" - disk in standby, wearout not read, {_desc}')
+            else:
+                _ret.append(f'3 "Disk {_id} Wearout" - the disk reports no wearout value (no known SMART attribute) - check smartctl -x {device} or the vendor tool, {_desc}')
+            return _ret, 1
+        _history = [_h for _h in _disk_state.get("wear",[]) if _h[0] >= now - 400 * 86400]
+        if not _history or _history[-1][1] != _life:
+            _history.append([now,_life])
+        _disk_state["wear"] = _history[-400:]
+        _wstatus = 2 if _life <= self.WEAR_CRIT else (1 if _life <= self.WEAR_WARN else 0)
+        _text = f"remaining life {_life}% (from {_source})"
+        _window = [_h for _h in _history if _h[0] >= now - self.FORECAST_WINDOW_DAYS * 86400]
+        if _window:
+            _days = (now - _window[0][0]) / 86400
+            _drop = _window[0][1] - _life
+            if _days >= self.FORECAST_MIN_DAYS and _drop >= self.FORECAST_MIN_DROP:
+                _forecast = _life / (_drop / _days)
+                _text += f", forecast 0% in about {_forecast:.0f} days"
+                if _forecast < self.FORECAST_CRIT_DAYS:
+                    _wstatus = 2
+                elif _forecast < self.FORECAST_WARN_DAYS:
+                    _wstatus = max(_wstatus,1)
+        _wperf = f"life_remaining={_life};{self.WEAR_WARN};{self.WEAR_CRIT};0;100"
+        if type(_nvme.get("data_units_written")) == int:
+            _written = _nvme["data_units_written"] * 512000
+            _wperf += f"|data_written={_written}B;;;0"
+            _text += f", written {_written / 1e12:.1f} TB"
+        if _wstatus:
+            _text += f" - order a spare disk and plan the replacement - {_fix}"
+        _ret.append(f'{_wstatus} "Disk {_id} Wearout" {_wperf} {_text}, {_desc}')
+        return _ret, 1
 
     def checklocal_acmeclient(self):
         _ret = []

@@ -28,6 +28,7 @@ liefert keinen Service.
 | `ipsec` | `IPsec Tunnel: <Name>` | Tunnel aufgebaut mit Phase 2 bzw. allen Children | ab 1.2.18: nur ein Teil der Children einer Verbindung aufgebaut | nicht verbunden, IPsec läuft nicht |
 | `wireguard` | `WireGuard Client: <Name>` | verbunden; Roadwarrior auch getrennt | – | Site-to-Site ohne Handshake seit 5 min; Instanz läuft nicht |
 | `netbird` | `NetBird`, `NetBird Peer: <Name>` | ab 1.2.18: Daemon, Management und Signal verbunden; Peer verbunden | Management oder Signal getrennt; Peer `Connecting` oder Handshake älter als 5 min | Daemon nicht verbunden (z. B. `NeedsLogin`), keine Daten; Peer getrennt |
+| `disks` | `Disks`, `Disk <Seriennummer> SMART`, `Disk <Seriennummer> Wearout` | ab 1.2.19: SMART in Ordnung; Restlebensdauer über 20 % | Zähler gestiegen, NVMe-Reserve knapp; Lebensdauer unter 20 % oder Prognose unter 180 Tagen | Selbstdiagnose FAILED, Attribut unter Schwelle, Selbsttest fehlgeschlagen; Lebensdauer unter 10 % oder Prognose unter 60 Tagen |
 | `unbound` | `Unbound DNS` | läuft, mit Anfragen und Cache-Treffern | – | läuft nicht |
 | `certificates` | `Certificate: <Name>`, `CA: <Name>` | ab 1.2.18: läuft noch 30 Tage oder länger | unter 30 Tagen | unter 14 Tagen oder abgelaufen |
 | `acmeclient` | `ACME Cert: <Name>` | Zertifikat erneuert | ausstehend | Fehler, Ablauf in unter 10 Tagen |
@@ -123,6 +124,19 @@ verschwinden.
 | `ipmi` | `ipmi` | IPMI-Sensoren | `ipmitool` installiert |
 | `apcupsd` | `apcaccess` | USV | Plugin `os-apcupsd` |
 | `taskdir` | – | Tasks ([Erweiterungen](03-erweiterungen.md#tasks)) | Task-Dateien |
+
+**Platten (`disks`)** ab 1.2.19, nur wenn `smartctl` installiert ist (Plugin `os-smart`), wie „PVE Disks“ des
+cmk-push-agent:
+- `Disks`: Zahl der physischen Platten (aus `smartctl --scan-open`; doppelt gelistete NVMe wie `nda0`/`nvme0` nur
+  einmal). In einer VM gibt es keine Services.
+- `Disk <Seriennummer> SMART`: nur, was `smart_posix` von Checkmk nicht auswertet – Ergebnis der Selbstdiagnose,
+  Attribute unter der Herstellerschwelle (Temperatur als Kühlproblem), letzter Selbsttest (abgebrochene Tests sind
+  kein Fehler), Anstieg der Zähler 198, SAS Grown Defects und SAS-Fehler (WARN eine Woche lang), NVMe-Reserve
+  weniger als 10 Punkte über der Schwelle. Bei einem Befund steht die Abhilfe im Text, bei ZFS mit dem Pool.
+- `Disk <Seriennummer> Wearout` (SSD/NVMe): Restlebensdauer (NVMe Percentage Used bzw. SMART-Attribut 177, 231,
+  233, 202, 169, 173) mit Prognose aus dem Verlauf, sobald sie über mindestens 30 Tage um 2 Punkte gesunken ist.
+Die Werte werden 30 Minuten zwischengespeichert, schlafende Platten nicht geweckt; der Verlauf liegt in
+`/var/lib/check_mk_agent/disks.json`. Der Name nutzt die Seriennummer, weil sich `/dev/ada0` beim Tausch ändern kann.
 
 **SMART ohne MKP:** Nach Rückmeldung von Nutzern (#83) funktioniert das Standard-Plugin `smart_posix` aus Checkmk
 auf der OPNsense: Plugin `os-smart` installieren (bringt `smartctl`), `smart_posix` aus dem Checkmk-Server
