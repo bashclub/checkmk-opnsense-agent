@@ -6,7 +6,7 @@ Development moved to https://code.bashclub.org/bashclub/checkmk-opnsense-agent w
 After an update, run a service discovery in Checkmk: several checks report new services or no longer report
 services that were wrong before.
 
-## 1.2.21 – testing
+## 1.2.21 – 2026-11-16
 - `Checkmk Agent Update` names the automatic update in its text (e.g. `auto update daily 03:00 (main)` or
   `auto update off`), without influence on the state.
 
