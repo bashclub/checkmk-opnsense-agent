@@ -30,7 +30,7 @@ class TestAgentUpdate(unittest.TestCase):
     def test_up_to_date(self):
         line, _ = self.run_check("1.2.17", {"main": "1.2.17", "testing": "1.2.17"})
         self.assertEqual(line, '0 "Checkmk Agent Update" update_available=0 Version 1.2.17 is up to date '
-                               '(release 1.2.17, testing 1.2.17)')
+                               '(release 1.2.17, testing 1.2.17), auto update off')
 
     def test_release_update_available(self):
         line, _ = self.run_check("1.2.16", {"main": "1.2.17", "testing": "1.2.18"})
@@ -57,11 +57,11 @@ class TestAgentUpdate(unittest.TestCase):
         line, _ = self.run_check("1.2.17", {"main": ConnectionError("Name does not resolve"),
                                             "testing": ConnectionError("Name does not resolve")})
         self.assertEqual(line, '0 "Checkmk Agent Update" update_available=0 Version 1.2.17, '
-                               'update check not possible: Name does not resolve')
+                               'update check not possible: Name does not resolve, auto update off')
 
     def test_missing_testing_branch_is_ignored(self):
         line, _ = self.run_check("1.2.17", {"main": "1.2.17"})
-        self.assertEqual(line, '0 "Checkmk Agent Update" update_available=0 Version 1.2.17 is up to date (release 1.2.17)')
+        self.assertEqual(line, '0 "Checkmk Agent Update" update_available=0 Version 1.2.17 is up to date (release 1.2.17), auto update off')
 
     def test_checks_only_once_a_day(self):
         agent = load_agent()
@@ -98,6 +98,51 @@ class TestAgentUpdate(unittest.TestCase):
                 with mock.patch.object(agent.time, "time", return_value=NOW + 86400 + 3602):
                     checker.checklocal_agentupdate()
                 self.assertGreater(fetch_mock.call_count, calls)
+
+
+ACTION = "/usr/local/opnsense/service/conf/actions.d/actions_checkmkagent.conf"
+
+
+def cron_job(minutes="0", hours="3", days="*", months="*", weekdays="*", enabled="1", branch="main"):
+    return (f'<job uuid="j-{minutes}-{hours}"><origin>cron</origin><enabled>{enabled}</enabled><minutes>{minutes}</minutes>'
+            f"<hours>{hours}</hours><days>{days}</days><months>{months}</months><weekdays>{weekdays}</weekdays>"
+            f"<who>root</who><command>checkmkagent update</command><parameters>{branch}</parameters>"
+            f"<description>Checkmk agent update ({branch})</description></job>")
+
+
+class TestAutoUpdateInfo(unittest.TestCase):
+    """the text names the cron job of --install-cron; it never changes the state"""
+
+    def text(self, *jobs, action=True):
+        from harness import config_xml
+        other = ('<job uuid="x"><enabled>1</enabled><minutes>0</minutes><hours>1</hours><command>firmware auto-update</command>'
+                 "<parameters/><description>other</description></job>")
+        config = config_xml("<OPNsense><cron><jobs>" + other + "".join(jobs) + "</jobs></cron></OPNsense>")
+        with FakeOPNsense(config, files={ACTION: "[update]\n"} if action else {}) as checker:
+            return checker._auto_update_text()
+
+    def test_variants(self):
+        self.assertEqual(self.text(), "auto update off")
+        self.assertEqual(self.text(cron_job()), "auto update daily 03:00 (main)")
+        self.assertEqual(self.text(cron_job("30", "4", weekdays="1", branch="testing")), "auto update Mon 04:30 (testing)")
+        self.assertEqual(self.text(cron_job("15", "2", weekdays="1,3,5")), "auto update Mon,Wed,Fri 02:15 (main)")
+        self.assertEqual(self.text(cron_job("*/30", "*")), "auto update cron */30 * * * * (main)")
+        self.assertEqual(self.text(cron_job(enabled="0")), "auto update off (cron job disabled)")
+
+    def test_action_missing(self):
+        self.assertEqual(self.text(cron_job(), action=False),
+                         "auto update daily 03:00 (main), but the configd action is missing - run --install-cron again")
+
+    def test_in_the_service_without_state_change(self):
+        agent = load_agent()
+        from harness import config_xml
+        config = config_xml("<OPNsense><cron><jobs>" + cron_job() + "</jobs></cron></OPNsense>")
+        with mock.patch.object(agent, "__VERSION__", "1.2.16"), \
+                FakeOPNsense(config, files={ACTION: "[update]\n"}, now=NOW) as checker:
+            with mock.patch.object(checker, "_fetch_agent_version", side_effect=lambda b: "1.2.17"):
+                line = checker.checklocal_agentupdate()[0]
+        self.assertTrue(line.startswith('1 "Checkmk Agent Update" update_available=1 Version 1.2.16, update to 1.2.17'), line)
+        self.assertTrue(line.endswith(", auto update daily 03:00 (main)"), line)
 
 
 class TestFetchAgentVersion(unittest.TestCase):

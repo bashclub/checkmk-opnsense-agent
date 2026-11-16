@@ -6,6 +6,10 @@ Development moved to https://code.bashclub.org/bashclub/checkmk-opnsense-agent w
 After an update, run a service discovery in Checkmk: several checks report new services or no longer report
 services that were wrong before.
 
+## 1.2.21 – testing
+- `Checkmk Agent Update` names the automatic update in its text (e.g. `auto update daily 03:00 (main)` or
+  `auto update off`), without influence on the state.
+
 ## 1.2.20 – 2026-11-15
 - Automatic update: `--update --yes` (no questions, only a newer version, never a downgrade, the new file must
   compile, restarts the agent) and `--install-cron ["0 3 * * *"]` (cron job in System > Settings > Cron via a configd

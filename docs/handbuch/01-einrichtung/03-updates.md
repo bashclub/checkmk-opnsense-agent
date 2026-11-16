@@ -63,6 +63,10 @@ Ab 1.2.17 prüft der Agent einmal am Tag, ob es eine neue Version gibt:
 | OK | Version aktuell, oder keine Prüfung möglich (kein Internet) |
 | WARN | Ein neues Release ist da; auf Testing auch eine neuere Testing-Version |
 
+Ab 1.2.21 nennt der Text außerdem, ob das automatische Update eingerichtet ist und wann es läuft, z. B.
+`auto update daily 03:00 (main)`, `auto update Mon,Wed 04:30 (testing)` oder `auto update off`; auf den Zustand hat das
+keinen Einfluss. Fehlt die configd-Aktion zu einem Job, steht das ebenfalls dort.
+
 Wer das Release nutzt, wird nur über Releases informiert. Ohne Internetzugang bleibt der Service OK und nennt den
 Grund; nach einem Fehler versucht er es nach einer Stunde erneut. Die Abfrage geht an code.bashclub.org (HTTPS; gelesen
 wird nur der Anfang der Datei mit der Versionsnummer).

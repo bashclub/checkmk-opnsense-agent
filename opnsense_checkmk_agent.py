@@ -33,7 +33,7 @@
 ##
 
 
-__VERSION__ = "1.2.20"
+__VERSION__ = "1.2.21"
 
 import sys
 import os
@@ -708,6 +708,30 @@ class checkmk_checker(object):
         finally:
             _req.close()
 
+    def _auto_update_text(self):
+        ## cron job of --install-cron (System > Settings > Cron): only information, no influence on the state
+        _cron = (self._config_reader().get("OPNsense") or {}).get("cron") or {}
+        _jobs = [_j for _j in self._as_list((_cron.get("jobs") or {}).get("job")) if _j.get("command") == CRON_COMMAND]
+        if not _jobs:
+            return "auto update off"
+        _enabled = [_j for _j in _jobs if _j.get("enabled") == "1"]
+        if not _enabled:
+            return "auto update off (cron job disabled)"
+        _days = ("Sun","Mon","Tue","Wed","Thu","Fri","Sat","Sun")
+        _texts = []
+        for _job in _enabled:
+            _m, _h, _d, _mo, _w = ((_job.get(_k) or "*").strip() for _k in ("minutes","hours","days","months","weekdays"))
+            if _m.isdigit() and _h.isdigit() and _d == "*" and _mo == "*" and (_w == "*" or re.fullmatch(r"[0-7](,[0-7])*",_w)):
+                _time = f"{int(_h):02d}:{int(_m):02d}"
+                _when = f"daily {_time}" if _w == "*" else "{0} {1}".format(",".join(_days[int(_x)] for _x in _w.split(",")),_time)
+            else:
+                _when = f"cron {_m} {_h} {_d} {_mo} {_w}"
+            _texts.append(f"{_when} ({_job.get('parameters') or 'main'})")
+        _text = "auto update " + ", ".join(_texts)
+        if not os.path.exists(CRON_ACTION_FILE):
+            _text += ", but the configd action is missing - run --install-cron again"
+        return _text
+
     def checklocal_agentupdate(self):
         _now = time.time()
         _cache = self._get_storedata("agentupdate","versions") or {}
@@ -724,9 +748,10 @@ class checkmk_checker(object):
         _current = self._version_tuple(__VERSION__)
         _release, _testing = _cache.get("main"), _cache.get("testing")
         _versions = f"release {_release}" + (f", testing {_testing}" if _testing else "")
+        _auto = self._auto_update_text()
         if not _release:
-            return [f'0 "Checkmk Agent Update" update_available=0 Version {__VERSION__}, update check not possible: {_cache.get("error")}']
-        _note = f" (last check failed: {_cache.get('error')})" if _cache.get("error") else ""
+            return [f'0 "Checkmk Agent Update" update_available=0 Version {__VERSION__}, update check not possible: {_cache.get("error")}, {_auto}']
+        _note = (f" (last check failed: {_cache.get('error')})" if _cache.get("error") else "") + f", {_auto}"
         if _current < self._version_tuple(_release):
             return [f'1 "Checkmk Agent Update" update_available=1 Version {__VERSION__}, update to {_release} available ({_versions}){_note}']
         if _testing and self._version_tuple(_release) < _current < self._version_tuple(_testing):
